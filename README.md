@@ -68,21 +68,6 @@ Scan the artifacts for vulnerabilities:
 ./target/release/suizero analyze ./build --format json
 ```
 
----
-
-## 📊 Validated Performance
-
-We practice what we preach. SUIZERO has been validated against a suite of intentionally broken contracts.
-
-| Target | Vulnerabilities | Detected | Success Rate |
-|--------|-----------------|----------|--------------|
-| **Hydra Invariant Vault** | 25 | **25** | **100%** |
-| **Chimera Vault** | 30 | **30** | **100%** |
-| **Production False Positives** | - | **0** | **0%** |
-
-*See the full [Validation Report](docs/VALIDATION_REPORT.md).*
-
----
 
 ## 📚 Documentation
 
