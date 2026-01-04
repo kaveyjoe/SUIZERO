@@ -99,5 +99,5 @@ Special thanks to the **Sui Foundation** and **Mysten Labs** for creating Move, 
 ---
 
 <div align="center">
-  <sub>Built with ❤️ by the SUIZERO Security Team</sub>
+  <sub>Built with ❤️ by KAVEYJOE
 </div>
