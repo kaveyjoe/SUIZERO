@@ -24,16 +24,6 @@ It is the **only** tool capable of detecting **Phantom Authorization** and **Cro
 
 ---
 
-## 🛡️ Unmatched Capabilities
-
-| Feature | SUIZERO | Others |
-|---------|---------|--------|
-| **Bytecode Analysis** | ✅ True execution logic | ❌ Source only |
-| **Phantom Auth (SUI-033)** | ✅ **Exclusive** | ❌ Missed |
-| **TOCTOU / Race Cond.** | ✅ **Exclusive** | ❌ Missed |
-| **Precision** | ✅ **100% Validated** | ⚠️ High False Positives |
-| **Speed** | ✅ **<50ms/module** | ⚠️ Slow |
-
 ### 🔬 Deep Inspection Technology
 SUIZERO doesn't just read code; it simulates execution paths to find:
 
