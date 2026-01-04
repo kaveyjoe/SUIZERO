@@ -19,7 +19,7 @@
 ## ⚡ Overview
 
 **SUIZERO** 
-SUIZERO is a high-signal security analysis engine purpose-built for the Sui Move ecosystem. It focuses on detecting real, exploitable vulnerabilities in Sui smart contracts by analyzing compiled bytecode and semantic execution patterns—not surface-level linting.
+is a high-signal security analysis engine purpose-built for the Sui Move ecosystem. It focuses on detecting real, exploitable vulnerabilities in Sui smart contracts by analyzing compiled bytecode and semantic execution patterns—not surface-level linting.
 SUIZERO is designed for environments where shared objects, capabilities, and economic invariants create attack surfaces that traditional scanners miss.
 
 
