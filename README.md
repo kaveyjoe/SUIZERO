@@ -35,7 +35,61 @@ SUIZERO doesn't just read code; it simulates execution paths to find:
 
 ---
 
-## 📦 Installation in 30 Seconds
+## Installation Requirements
+
+### System Dependencies
+
+1. **Rust Toolchain** (required)
+   - Install Rust via [rustup](https://rustup.rs/):
+     ```bash
+     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+     ```
+   - Or via your package manager:
+     ```bash
+     # Ubuntu/Debian
+     sudo apt install rustc cargo
+
+     # macOS (with Homebrew)
+     brew install rust
+     ```
+
+2. **Git** (required)
+   - For cloning the repository and fetching dependencies
+   ```bash
+   # Ubuntu/Debian
+   sudo apt install git
+
+   # macOS (with Homebrew)
+   brew install git
+
+   # Check installation
+   git --version
+   ```
+
+3. **Build Tools** (required)
+   - For compiling Rust dependencies
+   ```bash
+   # Ubuntu/Debian
+   sudo apt install build-essential
+
+   # macOS
+   xcode-select --install
+
+   # CentOS/RHEL/Fedora
+   sudo yum groupinstall "Development Tools"
+   ```
+
+### Optional Dependencies
+
+1. **SUI CLI** (optional, for enhanced functionality)
+   - Install the SUI CLI for additional integration:
+   ```bash
+   # Follow official SUI installation guide
+   # https://docs.sui.io/devnet/build/install
+   ```
+
+
+## 📦 Installation 
 
 ```bash
 git clone https://github.com/kaveyjoe/SUIZERO.git
