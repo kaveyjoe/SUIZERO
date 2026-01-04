@@ -13,10 +13,10 @@ This report documents the formal validation of the **Sui Security Analyzer** aga
 
 | Metric | Result | Verdict |
 |--------|--------|---------|
-| **Single-Function Detection** | **100% (18/18)** | 🌟 World Class |
-| **Phantom Auth Detection** | **100% (3/3)** | 🛡️ Industry First |
-| **Temporal/TOCTOU Detection** | **100% (2/2)** | 🚀 Breakthrough (v1.2) |
-| **False Positive Rate** | **0%** | ✅ Production Ready |
+| **Single-Function Detection** | **(18/18)** | 🌟 A Class |
+| **Phantom Auth Detection** | **(3/3)** | 🛡️ Industry First |
+| **Temporal/TOCTOU Detection** | ** (2/2)** | 🚀 Breakthrough (v1.2) |
+| **False Positive Rate** | **20%** | ✅ Production Ready |
 | **Performance** | **<50ms / module** | ⚡ Ultra Fast |
 
 ---
