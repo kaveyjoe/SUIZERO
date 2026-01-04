@@ -1,7 +1,7 @@
 # Protocol Validation Report
 **Target System:** Sui Security Analyzer v1.2.0  
 **Date:** 2026-01-05  
-**Validator:** Antigravity AI  
+
 
 ---
 
