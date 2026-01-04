@@ -84,6 +84,7 @@ We practice what we preach. SUIZERO has been validated against a suite of intent
 
 ## 📚 Documentation
 
+*   [🏗️ System Architecture](docs/DOCUMENTATION.md) - How it works.
 *   [📜 Validation Report](docs/VALIDATION_REPORT.md) - Proof of accuracy.
 *   [📈 Status & Roadmap](docs/STATUS.md) - What's next.
 *   [🧪 Test Examples](examples/) - Try it yourself.
