@@ -18,7 +18,9 @@
 
 ## ⚡ Overview
 
-**SUIZERO** is the industry standard for automated auditing of Sui Move smart contracts. Built for speed and precision, it analyzes compiled bytecode to detect Security vulnerabilities that source-level linters miss.
+**SUIZERO** 
+SUIZERO is a high-signal security analysis engine purpose-built for the Sui Move ecosystem. It focuses on detecting real, exploitable vulnerabilities in Sui smart contracts by analyzing compiled bytecode and semantic execution patterns—not surface-level linting.
+SUIZERO is designed for environments where shared objects, capabilities, and economic invariants create attack surfaces that traditional scanners miss.
 
 
 ---
@@ -85,7 +87,6 @@ We practice what we preach. SUIZERO has been validated against a suite of intent
 
 *   [🏗️ System Architecture](docs/DOCUMENTATION.md) - How it works.
 *   [📜 Validation Report](docs/VALIDATION_REPORT.md) - Proof of accuracy.
-*   [📈 Status & Roadmap](docs/STATUS.md) - What's next.
 *   [🧪 Test Examples](examples/) - Try it yourself.
 
 ---
