@@ -31,7 +31,7 @@ The **Sui Security Analyzer** is a bytecode-level static analysis tool for Sui M
 
 ### 1. **Phantom Authorization Detection (SUI-033)**
 
-This is a **world-first** capability that catches one of the most dangerous audit bypass patterns:
+This  catches one of the most dangerous audit bypass patterns:
 
 ```move
 // ❌ Looks secure to auditors
