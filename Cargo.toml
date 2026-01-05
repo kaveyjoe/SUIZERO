@@ -2,10 +2,10 @@
 name = "suizero"
 version = "1.2.0"
 edition = "2021"
-authors = ["SUIZERO Security Team <security@suizero.io>"]
+authors = ["kaveyjoe <web3.kaveyjoe@gmail.com>"]
 description = "SUIZERO: The Advanced SUI Move Security Analyzer"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/suizero/suizero"
+license = "Apache-2.0"
+repository = "https://github.com/kaveyjoe/suizero"
 homepage = "https://suizero.io"
 keywords = ["sui", "move", "security", "analyzer", "smart-contract"]
 categories = ["security", "cryptography::blockchain"]
