@@ -2,7 +2,7 @@
 name = "suizero"
 version = "1.2.0"
 edition = "2021"
-authors = ["kaveyjoe <web3.kaveyjoe@gmail.com>"]
+author = ["kaveyjoe <web3.kaveyjoe@gmail.com>"]
 description = "SUIZERO: The Advanced SUI Move Security Analyzer"
 license = "Apache-2.0"
 repository = "https://github.com/kaveyjoe/suizero"
