@@ -180,6 +180,7 @@ fi
 *   [🏗️ System Architecture](docs/DOCUMENTATION.md) - How it works.
 *   [📜 Validation Report](docs/VALIDATION_REPORT.md) - Proof of accuracy.
 *   [🧪 Test Examples](examples/) - Try it yourself.
+*   [📊 Sample Analysis Report](docs/suizero_analysis_results.md) - Example output from analyzing vulnerable contracts.
 
 ---
 
