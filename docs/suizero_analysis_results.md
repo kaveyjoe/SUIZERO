@@ -1,5 +1,5 @@
 ```
-=== SUI Security Analyzer ===
+=== SUIZERO Analyzer ===
 Analyzing: ./examples/vulnerable_project/build/vulnerable_project/bytecode_modules
 ⠏ Analysis complete!                                                                                     +------------+----------+--------------------------+--------------------------+-------------------------+
 | ID         | Severity | Title                    | Location                 | Description             |
