@@ -1,12 +1,9 @@
-
-```
                               ███████╗██╗   ██╗██╗███████╗███████╗██████╗  ██████╗ 
                               ██╔════╝██║   ██║██║╚══███╔╝██╔════╝██╔══██╗██╔═══██╗
                               ███████╗██║   ██║██║  ███╔╝ █████╗  ██████╔╝██║   ██║
                               ╚════██║██║   ██║██║ ███╔╝  ██╔══╝  ██╔══██╗██║   ██║
                               ███████║╚██████╔╝██║███████╗███████╗██║  ██║╚██████╔╝
                               ╚══════╝ ╚═════╝ ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝ ╚═════╝ 
-```
 > **The Enterprise-Grade Static Analysis Engine for Sui Move**
 
 [![Version](https://img.shields.io/badge/version-1.2.0-blue.svg?style=for-the-badge)](https://github.com/suizero/suizero)
@@ -16,7 +13,6 @@
 
 
 ---
-
 ## ⚡ Overview
 
 **SUIZERO** 
@@ -25,7 +21,6 @@ SUIZERO is designed for environments where shared objects, capabilities, and eco
 
 
 ---
-
 ### 🔬 Deep Inspection Technology
 SUIZERO doesn't just read code; it simulates execution paths to find:
 
@@ -34,7 +29,6 @@ SUIZERO doesn't just read code; it simulates execution paths to find:
 *   **⚖️ Economic Invariants**: Mathematical asymmetries in deposit/withdraw logic.
 
 ---
-
 ## Installation Requirements
 
 ### System Dependencies
@@ -93,12 +87,11 @@ SUIZERO doesn't just read code; it simulates execution paths to find:
 
 ```bash
 git clone https://github.com/kaveyjoe/SUIZERO.git
-cd sui-security-analyzer
+cd SUIZERO  # Note: corrected directory name
 cargo build --release --bin suizero
 ```
 
 ---
-
 ## 🚀 Usage Guide
 
 ### 1. Build Your Contract
@@ -120,8 +113,67 @@ Scan the artifacts for vulnerabilities:
 
 # 🤖 CI/CD Integration Mode (JSON)
 ./target/release/suizero analyze ./build --format json
+
+# 📊 Generate Detailed HTML Report
+./target/release/suizero analyze ./build --format html > report.html
+
+# 🔍 Specify Severity Threshold (only show critical and high issues)
+./target/release/suizero analyze ./build --min-severity critical
+
+# 📈 Verbose Output with Detailed Analysis
+./target/release/suizero analyze ./build --verbose
+
+# 📁 Analyze Specific Module
+./target/release/suizero analyze ./build/your_package/bytecode_modules
+
+# 📋 Generate Summary Report
+./target/release/suizero analyze ./build --format summary
 ```
 
+### 3. Command Options
+SUIZERO supports various command-line options:
+
+| Option | Description | Example |
+|--------|-------------|---------|
+| `--format` | Output format (console, markdown, json, html, summary) | `--format markdown` |
+| `--min-severity` | Minimum severity level to report (low, medium, high, critical) | `--min-severity high` |
+| `--verbose` | Enable detailed output | `--verbose` |
+| `--output` | Specify output file | `--output results.json` |
+| `--exclude` | Exclude specific detectors | `--exclude SUI-001` |
+| `--include` | Include only specific detectors | `--include AC-001` |
+
+### 4. Example Analysis Workflow
+```bash
+# Clone and build SUIZERO
+git clone https://github.com/kaveyjoe/SUIZERO.git
+cd SUIZERO
+cargo build --release --bin suizero
+
+# Navigate to your Sui Move project
+cd /path/to/your/sui/project
+
+# Build your Move contracts
+sui move build
+
+# Run security analysis
+../SUIZERO/target/release/suizero analyze ./build --format markdown > security_report.md
+
+# Review the findings in security_report.md
+```
+
+### 5. Integration with CI/CD
+For continuous integration, you can use the JSON output format:
+
+```bash
+# Example CI/CD script
+./target/release/suizero analyze ./build --format json > results.json
+
+# Check if critical issues were found
+if [ "$(jq '.critical_issues' results.json)" -gt 0 ]; then
+  echo "CRITICAL VULNERABILITIES FOUND - Blocking deployment"
+  exit 1
+fi
+```
 
 ## 📚 Documentation
 
