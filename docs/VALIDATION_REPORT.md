@@ -1,5 +1,5 @@
 # Protocol Validation Report
-**Target System:** Sui Security Analyzer v1.2.0  
+**Target System:** Sui Security Analyzer v1.0.0  
 **Date:** 2026-01-05  
 
 
@@ -15,7 +15,7 @@ This report documents the formal validation of the **Sui Security Analyzer** aga
 |--------|--------|---------|
 | **Single-Function Detection** | **(18/18)** | 🌟 A Class |
 | **Phantom Auth Detection** | **(3/3)** | 🛡️ Industry First |
-| **Temporal/TOCTOU Detection** | ** (2/2)** | 🚀 Breakthrough (v1.2) |
+| **Temporal/TOCTOU Detection** | ** (2/2)** | 🚀 Breakthrough (v1.0) |
 | **False Positive Rate** | **20%** | ✅ Production Ready |
 | **Performance** | **<50ms / module** | ⚡ Ultra Fast |
 
@@ -75,7 +75,7 @@ Chimera Vault tests the analyzer's ability to handle complex control flows.
 
 ## 🛑 Gap Analysis & Mitigations
 
-While version 1.2 represents a massive leap forward, specific "business logic" bugs remain out of scope for static analysis.
+While version 1.0 represents a massive leap forward, specific "business logic" bugs remain out of scope for static analysis.
 
 | Missed Vulnerability Pattern | Why it was missed | Mitigation Strategy |
 |------------------------------|-------------------|---------------------|
@@ -87,7 +87,7 @@ While version 1.2 represents a massive leap forward, specific "business logic" b
 
 ## 🚀 Version History & Improvements
 
-### v1.2.0 (Current)
+### v1.0.1 (Current)
 *   **New Detectors:** SUI-034, SUI-035, SUI-036, SUI-037, SUI-038
 *   **Major Win:** Validated detection of TOCTOU bugs which were invisible to v1.0.
 
