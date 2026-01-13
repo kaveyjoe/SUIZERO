@@ -87,7 +87,7 @@ SUIZERO doesn't just read code; it simulates execution paths to find:
 
 ```bash
 git clone https://github.com/kaveyjoe/SUIZERO.git
-cd SUIZERO  # Note: corrected directory name
+cd SUIZERO  
 cargo build --release --bin suizero
 ```
 
@@ -161,19 +161,7 @@ sui move build
 # Review the findings in security_report.md
 ```
 
-### 5. Integration with CI/CD
-For continuous integration, you can use the JSON output format:
 
-```bash
-# Example CI/CD script
-./target/release/suizero analyze ./build --format json > results.json
-
-# Check if critical issues were found
-if [ "$(jq '.critical_issues' results.json)" -gt 0 ]; then
-  echo "CRITICAL VULNERABILITIES FOUND - Blocking deployment"
-  exit 1
-fi
-```
 
 ## 📚 Documentation
 
