@@ -6,7 +6,7 @@
                               ╚══════╝ ╚═════╝ ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝ ╚═════╝ 
 > **The Enterprise-Grade Static Analysis Engine for Sui Move**
 
-[![Version](https://img.shields.io/badge/version-1.0-blue.svg?style=for-the-badge)](https://github.com/suizero/suizero)
+[![Version](https://img.shields.io/badge/version-1.0.1-blue.svg?style=for-the-badge)](https://github.com/suizero/suizero)
 [![Protection](https://img.shields.io/badge/security-enterprise-crimson.svg?style=for-the-badge)](https://sui.io)
 [![Accuracy](https://img.shields.io/badge/accuracy-80%25-success.svg?style=for-the-badge)](docs/VALIDATION_REPORT.md)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-green?style=for-the-badge)](LICENSE)
