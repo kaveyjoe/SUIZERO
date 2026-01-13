@@ -7,7 +7,7 @@ use move_binary_format::{file_format::*, access::ModuleAccess};
 fn is_ai_related_context(ctx: &DetectionContext) -> bool {
     let module_name = ctx.module.self_id().name().as_str().to_lowercase();
     
-    // STRICTER: Require stronger AI indicators
+    //  Require stronger AI indicators
     let has_explicit_ai_name = module_name.contains("ai_") || 
                                module_name.contains("_ai") ||
                                module_name.contains("agent") ||
@@ -53,7 +53,7 @@ fn is_ai_related_context(ctx: &DetectionContext) -> bool {
     has_explicit_ai_name && (ai_struct_count > 0 || ai_function_count > 1)
 }
 
-// AI-001: Unbounded AI Action - STRICTER
+// AI-001: Unbounded AI Action 
 pub struct UnboundedAIAction;
 
 #[async_trait::async_trait]
@@ -111,7 +111,7 @@ impl SecurityDetector for UnboundedAIAction {
     }
 }
 
-// AI-002: Model Manipulation - STRICTER
+// AI-002: Model Manipulation 
 pub struct ModelManipulation;
 
 #[async_trait::async_trait]
@@ -175,7 +175,7 @@ impl SecurityDetector for ModelManipulation {
     }
 }
 
-// AI-003: Prompt Injection - STRICTER
+// AI-003: Prompt Injection 
 pub struct PromptInjection;
 
 #[async_trait::async_trait]
@@ -239,7 +239,7 @@ impl SecurityDetector for PromptInjection {
     }
 }
 
-// AI-005: Reward Hacking - STRICTER
+// AI-005: Reward Hacking 
 pub struct RewardHacking;
 
 #[async_trait::async_trait]
@@ -300,7 +300,7 @@ impl SecurityDetector for RewardHacking {
     }
 }
 
-// AI-007: Emergent Behavior Risk - STRICTER
+// AI-007: Emergent Behavior Risk 
 pub struct EmergentBehaviorRisk;
 
 #[async_trait::async_trait]
@@ -353,7 +353,7 @@ impl SecurityDetector for EmergentBehaviorRisk {
     }
 }
 
-// AI-011: Corrigibility Issue - STRICTER
+// AI-011: Corrigibility Issue 
 pub struct CorrigibilityIssue;
 
 #[async_trait::async_trait]
@@ -418,7 +418,7 @@ impl SecurityDetector for CorrigibilityIssue {
     }
 }
 
-// AI-015: Adversarial Example Risk - STRICTER
+// AI-015: Adversarial Example Risk 
 pub struct AdversarialExampleRisk;
 
 #[async_trait::async_trait]
