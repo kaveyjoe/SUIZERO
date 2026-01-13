@@ -1,6 +1,6 @@
 # SUIZERO System Documentation
 
-**Version:** 1.2.0  
+**Version:** 1.0.1  
 **Target:** Sui Move Bytecode (`.mv`)
 
 ---
