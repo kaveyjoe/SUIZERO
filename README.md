@@ -130,17 +130,6 @@ Scan the artifacts for vulnerabilities:
 ./target/release/suizero analyze ./build --format summary
 ```
 
-### 3. Command Options
-SUIZERO supports various command-line options:
-
-| Option | Description | Example |
-|--------|-------------|---------|
-| `--format` | Output format (console, markdown, json, html, summary) | `--format markdown` |
-| `--min-severity` | Minimum severity level to report (low, medium, high, critical) | `--min-severity high` |
-| `--verbose` | Enable detailed output | `--verbose` |
-| `--output` | Specify output file | `--output results.json` |
-| `--exclude` | Exclude specific detectors | `--exclude SUI-001` |
-| `--include` | Include only specific detectors | `--include AC-001` |
 
 ### 4. Example Analysis Workflow
 ```bash
