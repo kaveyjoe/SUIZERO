@@ -4,7 +4,7 @@
                               ╚════██║██║   ██║██║ ███╔╝  ██╔══╝  ██╔══██╗██║   ██║
                               ███████║╚██████╔╝██║███████╗███████╗██║  ██║╚██████╔╝
                               ╚══════╝ ╚═════╝ ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝ ╚═════╝ 
-> **The Enterprise-Grade Static Analysis Engine for Sui Move**
+> ** Static Analysis Engine for Sui Move**
 
 [![Version](https://img.shields.io/badge/version-1.0.1-blue.svg?style=for-the-badge)](https://github.com/suizero/suizero)
 [![Protection](https://img.shields.io/badge/security-enterprise-crimson.svg?style=for-the-badge)](https://sui.io)
