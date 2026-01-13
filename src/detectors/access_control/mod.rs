@@ -11,7 +11,7 @@ struct ModuleSecurityContext {
     validation_patterns: Vec<String>,
 }
 
-// AC-001: Missing Sender Validation - ULTRA STRICT
+// AC-001: Missing Sender Validation 
 pub struct MissingSenderValidation;
 
 #[async_trait::async_trait]
@@ -39,7 +39,7 @@ impl SecurityDetector for MissingSenderValidation {
                 let func_name = ctx.module.identifier_at(func_handle.name);
                 let func_name_str = func_name.as_str();
                 
-                // ULTRA STRICT: Only flag if function name indicates admin/owner privilege
+                //  Only flag if function name indicates admin/owner privilege
                 let requires_privilege = func_name_str.contains("admin") ||
                                         func_name_str.contains("owner") ||
                                         func_name_str.contains("set_") ||
@@ -197,7 +197,7 @@ fn is_critical_state_modifier(func_def: &FunctionDefinition, module: &CompiledMo
     false
 }
 
-// AC-002: Hardcoded Addresses - ULTRA STRICT
+// AC-002: Hardcoded Addresses 
 pub struct HardcodedAddress;
 
 #[async_trait::async_trait]
@@ -339,7 +339,7 @@ fn get_address_usage_context(module: &CompiledModule, const_idx: u16) -> String 
     "unknown".to_string()
 }
 
-// AC-004: Missing Role Check - ULTRA STRICT
+// AC-004: Missing Role Check
 pub struct MissingRoleCheck;
 
 #[async_trait::async_trait]
@@ -417,7 +417,7 @@ fn has_explicit_role_check(func_def: &FunctionDefinition, module: &CompiledModul
     false
 }
 
-// AC-006: Privilege Escalation - ULTRA STRICT
+// AC-006: Privilege Escalation 
 pub struct PrivilegeEscalation;
 
 #[async_trait::async_trait]
@@ -488,7 +488,7 @@ fn has_strong_authorization_check(func_def: &FunctionDefinition, module: &Compil
     }
 }
 
-// AC-008: Unlimited Minting - ULTRA STRICT
+// AC-008: Unlimited Minting 
 pub struct UnlimitedMinting;
 
 #[async_trait::async_trait]
@@ -556,7 +556,7 @@ fn has_supply_validation(func_def: &FunctionDefinition, module: &CompiledModule)
     false
 }
 
-// AC-010: Centralization Risk - ULTRA STRICT
+// AC-010: Centralization Risk 
 pub struct CentralizationRisk;
 
 #[async_trait::async_trait]
@@ -628,7 +628,7 @@ fn has_emergency_recovery(module: &CompiledModule) -> bool {
     false
 }
 
-// AC-011: Signature Replay - ULTRA STRICT
+// AC-011: Signature Replay 
 pub struct SignatureReplay;
 
 #[async_trait::async_trait]
