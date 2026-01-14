@@ -32,26 +32,7 @@ SUIZERO doesn't just read code; it simulates execution paths to find:
 *   **💸 MEV & Front-running**: Auction vulnerabilities and slippage manipulation opportunities.
 
 
----
 
-## 📊 Comparison with Other Tools
-
-| Feature | SUIZERO | Slither | MythX | Halborn | OtterSec |
-|--------|---------|---------|---------|---------|---------|
-| **Sui Move Specific** | ✅ | ❌ | ❌ | ❌ | ❌ |
-| **Bytecode Analysis** | ✅ | ✅ | ✅ | ❌ | ❌ |
-| **Real-time Detection** | ✅ | ✅ | ✅ | ✅ | ❌ |
-| **Sui Ecosystem Expertise** | ✅ | ❌ | ❌ | ❌ | ❌ |
-| **Capability-based Security** | ✅ | ❌ | ❌ | ❌ | ❌ |
-| **Shared Object Analysis** | ✅ | ❌ | ❌ | ❌ | ❌ |
-| **Phantom Authorization** | ✅ | ❌ | ❌ | ❌ | ❌ |
-| **Temporal Vulnerabilities** | ✅ | ❌ | ❌ | ❌ | ❌ |
-| **330+ Specialized Detectors** | ✅ | ❌ | ❌ | ❌ | ❌ |
-| **Free & Open Source** | ✅ | ❌ | ✅ | ❌ | ❌ |
-
-SUIZERO is purpose-built for Sui Move, offering unparalleled detection accuracy for Sui-specific vulnerabilities that general-purpose tools miss entirely.
-
----
 
 ## Installation Requirements
 
