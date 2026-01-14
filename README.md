@@ -297,6 +297,11 @@ Special thanks to the **Sui Foundation** and **Mysten Labs** for creating Move, 
 *   **Security Issues**: Contact directly via private channel
 *   **Community**: Join discussions in the Issues section
 
+## 🤝 Acknowledgements
+
+Special thanks to the **Sui Foundation** and **Mysten Labs** for creating Move, a language that makes formal verification possible.
+
+---
 <div align="center">
   <sub>Built with ❤️ by KAVEYJOE
 </div>
