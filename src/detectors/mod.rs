@@ -423,7 +423,42 @@ impl DetectorRegistry {
 
         // Extended Detectors - Value Duplication (SEM-008)
         registry.add(Box::new(extended::value_duplication::ValueDuplicationDetector));
-
+        
+        // Extended Detectors - Randomness/Oracle
+        for detector in extended::randomness_oracle::get_randomness_oracle_detectors() {
+            registry.add(detector);
+        }
+        
+        // Extended Detectors - State Machine
+        for detector in extended::state_machine::get_state_machine_detectors() {
+            registry.add(detector);
+        }
+        
+        // Extended Detectors - Upgradeability
+        for detector in extended::upgradeability::get_upgradeability_detectors() {
+            registry.add(detector);
+        }
+        
+        // Extended Detectors - MEV/Frontrunning
+        for detector in extended::mev_frontrunning::get_mev_frontrunning_detectors() {
+            registry.add(detector);
+        }
+        
+        // Extended Detectors - Missing Events
+        for detector in extended::missing_events::get_missing_events_detectors() {
+            registry.add(detector);
+        }
+        
+        // Extended Detectors - Improper Validation
+        for detector in extended::improper_validation::get_improper_validation_detectors() {
+            registry.add(detector);
+        }
+        
+        // Extended Detectors - Specific Vulnerabilities
+        for detector in extended::specific_vulnerabilities::get_specific_vulnerability_detectors() {
+            registry.add(detector);
+        }
+        
         registry
     }
     
