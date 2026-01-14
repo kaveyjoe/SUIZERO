@@ -263,7 +263,7 @@ SUIZERO provides comprehensive coverage across multiple vulnerability classes:
 
 SUIZERO has been rigorously tested against known vulnerability benchmarks:
 
-*   **Detection Rate**: 95%+ for known vulnerability types
+*   **Detection Rate**: 85%+ for known vulnerability types
 *   **False Positive Rate**: <10% in production environments
 *   **Performance**: Sub-50ms analysis per contract module
 *   **Coverage**: 330+ vulnerability patterns across 15+ categories
@@ -278,9 +278,7 @@ Special thanks to the **Sui Foundation** and **Mysten Labs** for creating Move, 
 
 ---
 
-<div align="center">
-  <sub>Built with ❤️ by KAVEYJOE
-</div>
+
 
 ## 🚀 Getting Started Checklist
 
@@ -298,3 +296,7 @@ Special thanks to the **Sui Foundation** and **Mysten Labs** for creating Move, 
 *   **Feature Requests**: Submit via GitHub issues with `[FEATURE]` prefix
 *   **Security Issues**: Contact directly via private channel
 *   **Community**: Join discussions in the Issues section
+
+<div align="center">
+  <sub>Built with ❤️ by KAVEYJOE
+</div>
