@@ -5,8 +5,57 @@ use crate::core::detector::SecurityDetector;
 use crate::types::{SecurityIssue, Severity, Confidence, DetectionContext, CodeLocation};
 use move_binary_format::{
     access::ModuleAccess,
-    file_format::{Bytecode, Visibility},
+    file_format::{Bytecode, Visibility, SignatureToken},
 };
+
+// Helper function to check if function is financial in nature
+fn is_financial_function(ctx: &DetectionContext, func_def: &move_binary_format::file_format::FunctionDefinition) -> bool {
+    let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
+    let func_name = ctx.module.identifier_at(func_handle.name);
+    let func_name_lower = func_name.as_str().to_lowercase();
+    
+    // Check for financial keywords in function name
+    let has_financial_keywords = [
+        "swap", "trade", "buy", "sell", "mint", "burn", "transfer", "deposit",
+        "withdraw", "stake", "unstake", "claim", "reward", "vest", "unlock",
+        "fund", "pool", "liquidity", "lp", "pair", "router", "factory",
+        "coin", "token", "usdc", "usdt", "eth", "btc", "weth", "wrapped",
+        "amm", "dex", "farm", "harvest", "governance", "vote", "treasury"
+    ].iter().any(|&keyword| func_name_lower.contains(keyword));
+    
+    // Check for financial parameters
+    let has_financial_params = {
+        let params_sig = &ctx.module.signatures[func_handle.parameters.0 as usize];
+        params_sig.0.iter().any(|param| {
+            match param {
+                SignatureToken::Struct(s_idx) | 
+                SignatureToken::StructInstantiation(s_idx, _) => {
+                    let struct_handle = &ctx.module.struct_handles[s_idx.0 as usize];
+                    let struct_name = ctx.module.identifier_at(struct_handle.name);
+                    let struct_name_lower = struct_name.as_str().to_lowercase();
+                    struct_name_lower.contains("coin") || struct_name_lower.contains("token") || 
+                    struct_name_lower.contains("balance") || struct_name_lower.contains("wallet")
+                },
+                SignatureToken::Reference(inner) | SignatureToken::MutableReference(inner) => {
+                    match &**inner {
+                        SignatureToken::Struct(s_idx) | 
+                        SignatureToken::StructInstantiation(s_idx, _) => {
+                            let struct_handle = &ctx.module.struct_handles[s_idx.0 as usize];
+                            let struct_name = ctx.module.identifier_at(struct_handle.name);
+                            let struct_name_lower = struct_name.as_str().to_lowercase();
+                            struct_name_lower.contains("coin") || struct_name_lower.contains("token") || 
+                            struct_name_lower.contains("balance") || struct_name_lower.contains("wallet")
+                        },
+                        _ => false
+                    }
+                },
+                _ => false
+            }
+        })
+    };
+    
+    has_financial_keywords || has_financial_params
+}
 
 fn create_loc(ctx: &DetectionContext, func_idx: usize, instr_idx: u16) -> CodeLocation {
     let func_def = &ctx.module.function_defs[func_idx];
@@ -32,7 +81,7 @@ impl SecurityDetector for UpgradeBackdoorDetector {
     fn id(&self) -> &'static str { "GOV-001" }
     fn name(&self) -> &'static str { "Upgrade Backdoor" }
     fn description(&self) -> &'static str { "Detects upgrade backdoor vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::Critical }
+    fn default_severity(&self) -> Severity { Severity::High }
     
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
@@ -41,7 +90,8 @@ impl SecurityDetector for UpgradeBackdoorDetector {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("upgrade") || func_name.as_str().contains("migrate") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && (func_name.as_str().contains("upgrade") || func_name.as_str().contains("migrate")) {
                 if let Some(code) = &func_def.code {
                     // Check for proper authorization
                     let has_auth_check = code.code.iter().any(|i| {
@@ -82,14 +132,15 @@ impl SecurityDetector for GovernanceTakeoverDetector {
     fn id(&self) -> &'static str { "GOV-002" }
     fn name(&self) -> &'static str { "Governance Takeover" }
     fn description(&self) -> &'static str { "Detects governance takeover vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::Critical }
+    fn default_severity(&self) -> Severity { Severity::High }
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
         for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("transfer") && func_name.as_str().contains("admin") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && func_name.as_str().contains("transfer") && func_name.as_str().contains("admin") {
                 if let Some(code) = &func_def.code {
                     let has_multi_step = code.code.iter().filter(|i| {
                         matches!(i, Bytecode::WriteRef | Bytecode::MoveTo(_))
@@ -118,14 +169,15 @@ impl SecurityDetector for VoteManipulationDetector {
     fn id(&self) -> &'static str { "GOV-003" }
     fn name(&self) -> &'static str { "Vote Manipulation" }
     fn description(&self) -> &'static str { "Detects vote manipulation vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::High }
+    fn default_severity(&self) -> Severity { Severity::Medium }
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
         for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("vote") || func_name.as_str().contains("cast") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && (func_name.as_str().contains("vote") || func_name.as_str().contains("cast")) {
                 if let Some(code) = &func_def.code {
                     // Check for double voting prevention
                     let checks_voted = code.code.iter().any(|i| {
@@ -138,7 +190,7 @@ impl SecurityDetector for VoteManipulationDetector {
                     
                     if !checks_voted || !prevents_double {
                         issues.push(SecurityIssue {
-                            id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Medium,
+                            id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Low,
                             title: "Missing double-vote prevention".to_string(),
                             description: "Vote function may allow multiple votes".to_string(),
                             location: create_loc(ctx, idx, 0), source_code: None,
@@ -159,14 +211,15 @@ impl SecurityDetector for QuorumAttackDetector {
     fn id(&self) -> &'static str { "GOV-004" }
     fn name(&self) -> &'static str { "Quorum Attack" }
     fn description(&self) -> &'static str { "Detects quorum manipulation vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::High }
+    fn default_severity(&self) -> Severity { Severity::Medium }
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
         for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("quorum") || func_name.as_str().contains("threshold") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && (func_name.as_str().contains("quorum") || func_name.as_str().contains("threshold")) {
                 if let Some(code) = &func_def.code {
                     // Quorum changes should be protected
                     let has_governance = code.code.iter().any(|i| {
@@ -175,7 +228,7 @@ impl SecurityDetector for QuorumAttackDetector {
                     
                     if !has_governance {
                         issues.push(SecurityIssue {
-                            id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Medium,
+                            id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Low,
                             title: "Unprotected quorum modification".to_string(),
                             description: "Quorum can be changed without proper governance".to_string(),
                             location: create_loc(ctx, idx, 0), source_code: None,
@@ -196,14 +249,15 @@ impl SecurityDetector for TimelockExploitDetector {
     fn id(&self) -> &'static str { "GOV-005" }
     fn name(&self) -> &'static str { "Timelock Exploit" }
     fn description(&self) -> &'static str { "Detects timelock bypass vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::Critical }
+    fn default_severity(&self) -> Severity { Severity::High }
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
         for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("execute") && func_name.as_str().contains("proposal") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && func_name.as_str().contains("execute") && func_name.as_str().contains("proposal") {
                 if let Some(code) = &func_def.code {
                     // Check for timelock validation
                     let has_time_check = code.code.iter().any(|i| {
@@ -233,14 +287,15 @@ impl SecurityDetector for ProposalSpamDetector {
     fn id(&self) -> &'static str { "GOV-006" }
     fn name(&self) -> &'static str { "Proposal Spam" }
     fn description(&self) -> &'static str { "Detects proposal spam vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::Medium }
+    fn default_severity(&self) -> Severity { Severity::Low }
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
         for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("propose") || func_name.as_str().contains("create_proposal") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && (func_name.as_str().contains("propose") || func_name.as_str().contains("create_proposal")) {
                 if let Some(code) = &func_def.code {
                     // Check for proposal threshold/deposit
                     let has_threshold = code.code.iter().any(|i| {
@@ -249,7 +304,7 @@ impl SecurityDetector for ProposalSpamDetector {
                     
                     if !has_threshold {
                         issues.push(SecurityIssue {
-                            id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Medium,
+                            id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Low,
                             title: "No proposal creation threshold".to_string(),
                             description: "Anyone can create proposals without stake".to_string(),
                             location: create_loc(ctx, idx, 0), source_code: None,
@@ -270,14 +325,15 @@ impl SecurityDetector for DelegationAttackDetector {
     fn id(&self) -> &'static str { "GOV-007" }
     fn name(&self) -> &'static str { "Delegation Attack" }
     fn description(&self) -> &'static str { "Detects vote delegation vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::Medium }
+    fn default_severity(&self) -> Severity { Severity::Low }
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
         for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("delegate") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && func_name.as_str().contains("delegate") {
                 if let Some(code) = &func_def.code {
                     // Check for circular delegation prevention
                     let has_circular_check = code.code.iter().filter(|i| {
@@ -307,21 +363,21 @@ impl SecurityDetector for GovernanceTokenAbuseDetector {
     fn id(&self) -> &'static str { "GOV-008" }
     fn name(&self) -> &'static str { "Governance Token Abuse" }
     fn description(&self) -> &'static str { "Detects governance token manipulation" }
-    fn default_severity(&self) -> Severity { Severity::High }
+    fn default_severity(&self) -> Severity { Severity::Low }
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
         
-        // Check for flash loan attacks on governance
+        // Check for flash loan attacks on governance in financial functions
         let has_vote_func = ctx.module.function_defs.iter().any(|f| {
             let handle = &ctx.module.function_handles[f.function.0 as usize];
             let name = ctx.module.identifier_at(handle.name);
-            name.as_str().contains("vote")
+            name.as_str().contains("vote") && is_financial_function(ctx, f)
         });
         
         let has_token_transfer = ctx.module.function_defs.iter().any(|f| {
             let handle = &ctx.module.function_handles[f.function.0 as usize];
             let name = ctx.module.identifier_at(handle.name);
-            name.as_str().contains("transfer")
+            name.as_str().contains("transfer") && is_financial_function(ctx, f)
         });
         
         if has_vote_func && has_token_transfer {
@@ -351,14 +407,15 @@ impl SecurityDetector for SnapshotManipulationDetector {
     fn id(&self) -> &'static str { "GOV-009" }
     fn name(&self) -> &'static str { "Snapshot Manipulation" }
     fn description(&self) -> &'static str { "Detects snapshot manipulation risks" }
-    fn default_severity(&self) -> Severity { Severity::Medium }
+    fn default_severity(&self) -> Severity { Severity::Low }
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
         for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("snapshot") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && func_name.as_str().contains("snapshot") {
                 if let Some(code) = &func_def.code {
                     // Check for block number usage
                     let uses_block = code.code.iter().any(|i| {
@@ -388,14 +445,15 @@ impl SecurityDetector for VotingPowerExploitDetector {
     fn id(&self) -> &'static str { "GOV-010" }
     fn name(&self) -> &'static str { "Voting Power Exploit" }
     fn description(&self) -> &'static str { "Detects voting power calculation flaws" }
-    fn default_severity(&self) -> Severity { Severity::High }
+    fn default_severity(&self) -> Severity { Severity::Medium }
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
         for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("voting_power") || func_name.as_str().contains("get_power") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && (func_name.as_str().contains("voting_power") || func_name.as_str().contains("get_power")) {
                 if let Some(code) = &func_def.code {
                     // Check for overflow in power calculation
                     let has_overflow_check = code.code.iter().any(|i| {
@@ -408,7 +466,7 @@ impl SecurityDetector for VotingPowerExploitDetector {
                     
                     if has_mul && !has_overflow_check {
                         issues.push(SecurityIssue {
-                            id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Medium,
+                            id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Low,
                             title: "Voting power overflow risk".to_string(),
                             description: "Multiplication without overflow check".to_string(),
                             location: create_loc(ctx, idx, 0), source_code: None,
@@ -429,24 +487,27 @@ impl SecurityDetector for WeightedVotingAttackDetector {
     fn id(&self) -> &'static str { "GOV-011" }
     fn name(&self) -> &'static str { "Weighted Voting Attack" }
     fn description(&self) -> &'static str { "Detects weighted voting vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::Medium }
+    fn default_severity(&self) -> Severity { Severity::Low }
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
         for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
-            if let Some(code) = &func_def.code {
-                // Weighted voting with multiplication
-                let mul_count = code.code.iter().filter(|i| matches!(i, Bytecode::Mul)).count();
-                let div_count = code.code.iter().filter(|i| matches!(i, Bytecode::Div)).count();
-                
-                if mul_count > 0 && div_count == 0 {
-                    issues.push(SecurityIssue {
-                        id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Low,
-                        title: "Weight multiplication without normalization".to_string(),
-                        description: "Weights multiplied but not normalized".to_string(),
-                        location: create_loc(ctx, idx, 0), source_code: None,
-                        recommendation: "Normalize weighted votes. Prevent weight manipulation.".to_string(),
-                        references: vec![], metadata: std::collections::HashMap::new(),
-                    });
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) {
+                if let Some(code) = &func_def.code {
+                    // Weighted voting with multiplication
+                    let mul_count = code.code.iter().filter(|i| matches!(i, Bytecode::Mul)).count();
+                    let div_count = code.code.iter().filter(|i| matches!(i, Bytecode::Div)).count();
+                    
+                    if mul_count > 0 && div_count == 0 {
+                        issues.push(SecurityIssue {
+                            id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Low,
+                            title: "Weight multiplication without normalization".to_string(),
+                            description: "Weights multiplied but not normalized".to_string(),
+                            location: create_loc(ctx, idx, 0), source_code: None,
+                            recommendation: "Normalize weighted votes. Prevent weight manipulation.".to_string(),
+                            references: vec![], metadata: std::collections::HashMap::new(),
+                        });
+                    }
                 }
             }
         }
@@ -460,14 +521,15 @@ impl SecurityDetector for QuadraticVotingExploitDetector {
     fn id(&self) -> &'static str { "GOV-012" }
     fn name(&self) -> &'static str { "Quadratic Voting Exploit" }
     fn description(&self) -> &'static str { "Detects quadratic voting vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::Medium }
+    fn default_severity(&self) -> Severity { Severity::Low }
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
         for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("quadratic") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && func_name.as_str().contains("quadratic") {
                 if let Some(code) = &func_def.code {
                     // Check for sybil resistance
                     let has_identity_check = code.code.iter().filter(|i| {
@@ -497,14 +559,15 @@ impl SecurityDetector for GovernanceDelayAttackDetector {
     fn id(&self) -> &'static str { "GOV-013" }
     fn name(&self) -> &'static str { "Governance Delay Attack" }
     fn description(&self) -> &'static str { "Detects governance delay manipulation" }
-    fn default_severity(&self) -> Severity { Severity::Medium }
+    fn default_severity(&self) -> Severity { Severity::Low }
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
         for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("set_delay") || func_name.as_str().contains("update_delay") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && (func_name.as_str().contains("set_delay") || func_name.as_str().contains("update_delay")) {
                 if let Some(code) = &func_def.code {
                     // Delay changes should have bounds
                     let has_bounds = code.code.iter().filter(|i| {
@@ -513,7 +576,7 @@ impl SecurityDetector for GovernanceDelayAttackDetector {
                     
                     if !has_bounds {
                         issues.push(SecurityIssue {
-                            id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Medium,
+                            id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Low,
                             title: "Unbounded delay modification".to_string(),
                             description: "Delay can be set to extreme values".to_string(),
                             location: create_loc(ctx, idx, 0), source_code: None,
@@ -534,14 +597,15 @@ impl SecurityDetector for EmergencyPauseAbuseDetector {
     fn id(&self) -> &'static str { "GOV-014" }
     fn name(&self) -> &'static str { "Emergency Pause Abuse" }
     fn description(&self) -> &'static str { "Detects emergency pause abuse risks" }
-    fn default_severity(&self) -> Severity { Severity::High }
+    fn default_severity(&self) -> Severity { Severity::Medium }
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
         for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("pause") || func_name.as_str().contains("emergency") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && (func_name.as_str().contains("pause") || func_name.as_str().contains("emergency")) {
                 if let Some(code) = &func_def.code {
                     // Emergency functions should have strict auth
                     let auth_checks = code.code.iter().filter(|i| {
@@ -571,14 +635,15 @@ impl SecurityDetector for AdminKeyRotationFlawDetector {
     fn id(&self) -> &'static str { "GOV-015" }
     fn name(&self) -> &'static str { "Admin Key Rotation Flaw" }
     fn description(&self) -> &'static str { "Detects admin key rotation vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::Critical }
+    fn default_severity(&self) -> Severity { Severity::High }
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
         for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("rotate") && func_name.as_str().contains("key") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && func_name.as_str().contains("rotate") && func_name.as_str().contains("key") {
                 if let Some(code) = &func_def.code {
                     // Key rotation should be two-step
                     let write_count = code.code.iter().filter(|i| {
@@ -587,7 +652,7 @@ impl SecurityDetector for AdminKeyRotationFlawDetector {
                     
                     if write_count < 2 {
                         issues.push(SecurityIssue {
-                            id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Medium,
+                            id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Low,
                             title: "Single-step key rotation".to_string(),
                             description: "Key rotation should be two-step process".to_string(),
                             location: create_loc(ctx, idx, 0), source_code: None,
@@ -608,14 +673,15 @@ impl SecurityDetector for MultisigUpgradeAttackDetector {
     fn id(&self) -> &'static str { "GOV-016" }
     fn name(&self) -> &'static str { "Multisig Upgrade Attack" }
     fn description(&self) -> &'static str { "Detects multisig upgrade vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::Critical }
+    fn default_severity(&self) -> Severity { Severity::High }
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
         for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("multisig") && func_name.as_str().contains("threshold") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && func_name.as_str().contains("multisig") && func_name.as_str().contains("threshold") {
                 if let Some(code) = &func_def.code {
                     // Threshold changes should be protected
                     let has_governance = code.code.iter().filter(|i| {
@@ -624,7 +690,7 @@ impl SecurityDetector for MultisigUpgradeAttackDetector {
                     
                     if !has_governance {
                         issues.push(SecurityIssue {
-                            id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Medium,
+                            id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Low,
                             title: "Unprotected threshold modification".to_string(),
                             description: "Multisig threshold can be changed without protection".to_string(),
                             location: create_loc(ctx, idx, 0), source_code: None,
@@ -645,14 +711,15 @@ impl SecurityDetector for ProxyPatternExploitDetector {
     fn id(&self) -> &'static str { "GOV-017" }
     fn name(&self) -> &'static str { "Proxy Pattern Exploit" }
     fn description(&self) -> &'static str { "Detects proxy pattern vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::High }
+    fn default_severity(&self) -> Severity { Severity::Medium }
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
         for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("proxy") || func_name.as_str().contains("delegatecall") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && (func_name.as_str().contains("proxy") || func_name.as_str().contains("delegatecall")) {
                 if let Some(code) = &func_def.code {
                     // Proxy should validate implementation
                     let has_validation = code.code.iter().any(|i| {
@@ -661,7 +728,7 @@ impl SecurityDetector for ProxyPatternExploitDetector {
                     
                     if !has_validation {
                         issues.push(SecurityIssue {
-                            id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Medium,
+                            id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Low,
                             title: "Proxy without implementation validation".to_string(),
                             description: "Proxy doesn't validate implementation address".to_string(),
                             location: create_loc(ctx, idx, 0), source_code: None,

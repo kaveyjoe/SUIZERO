@@ -1,5 +1,5 @@
 // Extended Sui-Specific Security Detectors
-// Ported from addmores/sui_specific.rs to SecurityDetector API
+// Updated to be more precise and focus on financial functions
 
 use crate::core::detector::SecurityDetector;
 use crate::types::{SecurityIssue, Severity, Confidence, DetectionContext, CodeLocation};
@@ -24,6 +24,85 @@ fn create_loc(ctx: &DetectionContext, func_idx: usize, instr_idx: u16) -> CodeLo
     }
 }
 
+// Helper function to determine if a function is financial-related
+fn is_financial_function(ctx: &DetectionContext, func_def: &move_binary_format::file_format::FunctionDefinition) -> bool {
+    let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
+    let func_name = ctx.module.identifier_at(func_handle.name).as_str().to_lowercase();
+    
+    // Check function name for financial indicators
+    if func_name.contains("transfer") ||
+       func_name.contains("mint") ||
+       func_name.contains("burn") ||
+       func_name.contains("withdraw") ||
+       func_name.contains("deposit") ||
+       func_name.contains("pay") ||
+       func_name.contains("send") ||
+       func_name.contains("receive") ||
+       func_name.contains("balance") ||
+       func_name.contains("amount") ||
+       func_name.contains("price") ||
+       func_name.contains("rate") ||
+       func_name.contains("fee") ||
+       func_name.contains("swap") ||
+       func_name.contains("pool") ||
+       func_name.contains("stake") ||
+       func_name.contains("unstake") ||
+       func_name.contains("claim") ||
+       func_name.contains("reward") ||
+       func_name.contains("vest") ||
+       func_name.contains("lock") ||
+       func_name.contains("unlock") {
+        return true;
+    }
+    
+    // Check parameters for financial indicators
+    let parameters = &ctx.module.signatures[func_handle.parameters.0 as usize];
+    for param in &parameters.0 {
+        if is_financial_type(param, ctx) {
+            return true;
+        }
+    }
+    
+    // Check return types for financial indicators
+    let return_sig = &ctx.module.signatures[func_handle.return_.0 as usize];
+    for ret in &return_sig.0 {
+        if is_financial_type(ret, ctx) {
+            return true;
+        }
+    }
+    
+    false
+}
+
+// Helper function to check if a type is financial-related
+fn is_financial_type(token: &SignatureToken, ctx: &DetectionContext) -> bool {
+    match token {
+        SignatureToken::Struct(idx) | 
+        SignatureToken::StructInstantiation(idx, _) => {
+            let struct_handle = ctx.module.struct_handle_at(*idx);
+            let struct_name = ctx.module.identifier_at(struct_handle.name).as_str().to_lowercase();
+            
+            struct_name.contains("coin") ||
+            struct_name.contains("balance") ||
+            struct_name.contains("amount") ||
+            struct_name.contains("value") ||
+            struct_name.contains("price") ||
+            struct_name.contains("usd") ||
+            struct_name.contains("eth") ||
+            struct_name.contains("btc") ||
+            struct_name.contains("token") ||
+            struct_name.contains("asset") ||
+            struct_name.contains("fund") ||
+            struct_name.contains("payment")
+        },
+        SignatureToken::U64 | SignatureToken::U128 => {
+            // U64/U128 are commonly used for amounts/values
+            true
+        },
+        _ => false,
+    }
+}
+
 // ========== 1. SHARED OBJECT CONFLICT ==========
 pub struct SharedObjectConflictDetector;
 
@@ -31,7 +110,7 @@ pub struct SharedObjectConflictDetector;
 impl SecurityDetector for SharedObjectConflictDetector {
     fn id(&self) -> &'static str { "SUI-001" }
     fn name(&self) -> &'static str { "Shared Object Conflict" }
-    fn description(&self) -> &'static str { "Detects conflicting shared object access patterns" }
+    fn description(&self) -> &'static str { "Detects conflicting shared object access patterns in financial functions" }
     fn default_severity(&self) -> Severity { Severity::High }
     
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
@@ -39,6 +118,11 @@ impl SecurityDetector for SharedObjectConflictDetector {
         
         for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
             if let Some(code) = &func_def.code {
+                // Only check financial functions
+                if !is_financial_function(ctx, func_def) {
+                    continue;
+                }
+                
                 // Check for multiple mutable borrows of globals (shared objects)
                 let mut_global_borrows = code.code.iter().filter(|i| {
                     matches!(i, Bytecode::MutBorrowGlobal(_) | Bytecode::MutBorrowGlobalGeneric(_))
@@ -48,12 +132,12 @@ impl SecurityDetector for SharedObjectConflictDetector {
                     issues.push(SecurityIssue {
                         id: self.id().to_string(),
                         severity: self.default_severity(),
-                        confidence: Confidence::Medium,
-                        title: "Multiple shared object mutations".to_string(),
-                        description: format!("{} mutable borrows may cause transaction conflicts", mut_global_borrows),
+                        confidence: Confidence::High,
+                        title: "Multiple shared object mutations in financial function".to_string(),
+                        description: format!("{} mutable borrows may cause transaction conflicts in financial function", mut_global_borrows),
                         location: create_loc(ctx, idx, 0),
                         source_code: None,
-                        recommendation: "Minimize shared object mutations. Use owned objects when possible. Batch updates.".to_string(),
+                        recommendation: "Minimize shared object mutations in financial functions. Use owned objects when possible. Batch updates.".to_string(),
                         references: vec!["https://docs.sui.io/concepts/object-ownership/shared".to_string()],
                         metadata: std::collections::HashMap::new(),
                     });
@@ -72,7 +156,7 @@ pub struct SharedObjectDeadlockDetector;
 impl SecurityDetector for SharedObjectDeadlockDetector {
     fn id(&self) -> &'static str { "SUI-002" }
     fn name(&self) -> &'static str { "Shared Object Deadlock" }
-    fn description(&self) -> &'static str { "Detects potential shared object deadlocks" }
+    fn description(&self) -> &'static str { "Detects potential shared object deadlocks in financial functions" }
     fn default_severity(&self) -> Severity { Severity::Critical }
     
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
@@ -80,13 +164,18 @@ impl SecurityDetector for SharedObjectDeadlockDetector {
         
         for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
             if let Some(code) = &func_def.code {
-                // Look for nested shared object access
+                // Only check financial functions
+                if !is_financial_function(ctx, func_def) {
+                    continue;
+                }
+                
+                // Look for nested shared object access - include both generic and non-generic versions
                 let has_nested_globals = code.code.windows(10).any(|window| {
                     let first_global = window.iter().any(|i| {
-                        matches!(i, Bytecode::MutBorrowGlobal(_))
+                        matches!(i, Bytecode::MutBorrowGlobal(_) | Bytecode::MutBorrowGlobalGeneric(_))
                     });
                     let second_global = window.iter().skip(1).any(|i| {
-                        matches!(i, Bytecode::MutBorrowGlobal(_))
+                        matches!(i, Bytecode::MutBorrowGlobal(_) | Bytecode::MutBorrowGlobalGeneric(_))
                     });
                     first_global && second_global
                 });
@@ -95,12 +184,12 @@ impl SecurityDetector for SharedObjectDeadlockDetector {
                     issues.push(SecurityIssue {
                         id: self.id().to_string(),
                         severity: self.default_severity(),
-                        confidence: Confidence::Medium,
-                        title: "Potential shared object deadlock".to_string(),
-                        description: "Nested shared object access may cause deadlock".to_string(),
+                        confidence: Confidence::High,
+                        title: "Potential shared object deadlock in financial function".to_string(),
+                        description: "Nested shared object access may cause deadlock in financial function".to_string(),
                         location: create_loc(ctx, idx, 0),
                         source_code: None,
-                        recommendation: "Access shared objects in consistent order. Avoid nested shared object locks.".to_string(),
+                        recommendation: "Access shared objects in consistent order in financial functions. Avoid nested shared object locks.".to_string(),
                         references: vec![],
                         metadata: std::collections::HashMap::new(),
                     });
@@ -119,7 +208,7 @@ pub struct SharedObjectStarvationDetector;
 impl SecurityDetector for SharedObjectStarvationDetector {
     fn id(&self) -> &'static str { "SUI-003" }
     fn name(&self) -> &'static str { "Shared Object Starvation" }
-    fn description(&self) -> &'static str { "Detects operations that may starve shared object access" }
+    fn description(&self) -> &'static str { "Detects operations that may starve shared object access in financial functions" }
     fn default_severity(&self) -> Severity { Severity::Medium }
     
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
@@ -127,25 +216,30 @@ impl SecurityDetector for SharedObjectStarvationDetector {
         
         for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
             if let Some(code) = &func_def.code {
-                // Check for long-running operations on shared objects
+                // Only check financial functions
+                if !is_financial_function(ctx, func_def) {
+                    continue;
+                }
+                
+                // Check for long-running operations on shared objects - include both generic and non-generic versions
                 let has_shared = code.code.iter().any(|i| {
-                    matches!(i, Bytecode::MutBorrowGlobal(_))
+                    matches!(i, Bytecode::MutBorrowGlobal(_) | Bytecode::MutBorrowGlobalGeneric(_))
                 });
                 
                 let has_loop = code.code.iter().any(|i| {
-                    matches!(i, Bytecode::BrTrue(_) | Bytecode::BrFalse(_))
+                    matches!(i, Bytecode::BrTrue(_) | Bytecode::BrFalse(_) | Bytecode::Branch(_))
                 });
                 
                 if has_shared && has_loop {
                     issues.push(SecurityIssue {
                         id: self.id().to_string(),
                         severity: self.default_severity(),
-                        confidence: Confidence::Low,
-                        title: "Loop with shared object access".to_string(),
-                        description: "Long-running loop on shared object may starve other transactions".to_string(),
+                        confidence: Confidence::High,
+                        title: "Loop with shared object access in financial function".to_string(),
+                        description: "Long-running loop on shared object may starve other transactions in financial function".to_string(),
                         location: create_loc(ctx, idx, 0),
                         source_code: None,
-                        recommendation: "Keep shared object operations short. Use owned objects for loops.".to_string(),
+                        recommendation: "Keep shared object operations short in financial functions. Use owned objects for loops.".to_string(),
                         references: vec![],
                         metadata: std::collections::HashMap::new(),
                     });
@@ -164,11 +258,16 @@ pub struct OwnedObjectAbuseDetector;
 impl SecurityDetector for OwnedObjectAbuseDetector {
     fn id(&self) -> &'static str { "SUI-004" }
     fn name(&self) -> &'static str { "Owned Object Abuse" }
-    fn description(&self) -> &'static str { "Detects misuse of owned objects" }
+    fn description(&self) -> &'static str { "Detects misuse of owned objects in financial functions" }
     fn default_severity(&self) -> Severity { Severity::Medium }
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
         for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
+            // Only check financial functions
+            if !is_financial_function(ctx, func_def) {
+                continue;
+            }
+            
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
@@ -180,11 +279,11 @@ impl SecurityDetector for OwnedObjectAbuseDetector {
                     
                     if !has_owner_check {
                         issues.push(SecurityIssue {
-                            id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Medium,
-                            title: "Transfer without ownership check".to_string(),
+                            id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::High,
+                            title: "Transfer without ownership check in financial function".to_string(),
                             description: format!("Function '{}' transfers object without verifying ownership", func_name),
                             location: create_loc(ctx, idx, 0), source_code: None,
-                            recommendation: "Verify object ownership before transfer. Check sender matches owner.".to_string(),
+                            recommendation: "Verify object ownership before transfer in financial functions. Check sender matches owner.".to_string(),
                             references: vec![], metadata: std::collections::HashMap::new(),
                         });
                     }
@@ -200,12 +299,17 @@ pub struct ObjectWrappingAttackDetector;
 impl SecurityDetector for ObjectWrappingAttackDetector {
     fn id(&self) -> &'static str { "SUI-005" }
     fn name(&self) -> &'static str { "Object Wrapping Attack" }
-    fn description(&self) -> &'static str { "Detects unsafe object wrapping" }
+    fn description(&self) -> &'static str { "Detects unsafe object wrapping in financial functions" }
     fn default_severity(&self) -> Severity { Severity::High }
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
         for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
             if let Some(code) = &func_def.code {
+                // Only check financial functions
+                if !is_financial_function(ctx, func_def) {
+                    continue;
+                }
+                
                 // Look for packing operations (object wrapping)
                 for (i, instr) in code.code.iter().enumerate() {
                     if matches!(instr, Bytecode::Pack(_) | Bytecode::PackGeneric(_)) {
@@ -232,11 +336,11 @@ impl SecurityDetector for ObjectWrappingAttackDetector {
                         
                         if !has_validation {
                             issues.push(SecurityIssue {
-                                id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Low,
-                                title: "Sensitive object wrapping without validation".to_string(),
-                                description: "Critical object (Cap/Policy) wrapped without checking state".to_string(),
+                                id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::High,
+                                title: "Sensitive object wrapping without validation in financial function".to_string(),
+                                description: "Critical object (Cap/Policy) wrapped without checking state in financial function".to_string(),
                                 location: create_loc(ctx, idx, i as u16), source_code: None,
-                                recommendation: "Validate object state before wrapping. Ensure wrapped object is safe.".to_string(),
+                                recommendation: "Validate object state before wrapping in financial functions. Ensure wrapped object is safe.".to_string(),
                                 references: vec![], metadata: std::collections::HashMap::new(),
                             });
                         }
@@ -253,12 +357,17 @@ pub struct ObjectUnwrappingAttackDetector;
 impl SecurityDetector for ObjectUnwrappingAttackDetector {
     fn id(&self) -> &'static str { "SUI-006" }
     fn name(&self) -> &'static str { "Object Unwrapping Attack" }
-    fn description(&self) -> &'static str { "Detects unsafe object unwrapping" }
+    fn description(&self) -> &'static str { "Detects unsafe object unwrapping in financial functions" }
     fn default_severity(&self) -> Severity { Severity::High }
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
         for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
             if let Some(code) = &func_def.code {
+                // Only check financial functions
+                if !is_financial_function(ctx, func_def) {
+                    continue;
+                }
+                
                 for (i, instr) in code.code.iter().enumerate() {
                     if matches!(instr, Bytecode::Unpack(_) | Bytecode::UnpackGeneric(_)) {
                         let has_type_check = code.code.iter()
@@ -269,11 +378,11 @@ impl SecurityDetector for ObjectUnwrappingAttackDetector {
                         
                         if !has_type_check {
                             issues.push(SecurityIssue {
-                                id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Medium,
-                                title: "Unsafe object unwrapping".to_string(),
-                                description: "Unwrapping without type validation".to_string(),
+                                id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::High,
+                                title: "Unsafe object unwrapping in financial function".to_string(),
+                                description: "Unwrapping without type validation in financial function".to_string(),
                                 location: create_loc(ctx, idx, i as u16), source_code: None,
-                                recommendation: "Verify object type before unwrapping. Add runtime checks.".to_string(),
+                                recommendation: "Verify object type before unwrapping in financial functions. Add runtime checks.".to_string(),
                                 references: vec![], metadata: std::collections::HashMap::new(),
                             });
                         }
@@ -480,8 +589,8 @@ impl SecurityDetector for EphemeralObjectLeakDetector {
         let mut issues = Vec::new();
         for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
             if let Some(code) = &func_def.code {
-                let pack_count = code.code.iter().filter(|i| matches!(i, Bytecode::Pack(_))).count();
-                let unpack_count = code.code.iter().filter(|i| matches!(i, Bytecode::Unpack(_))).count();
+                let pack_count = code.code.iter().filter(|i| matches!(i, Bytecode::Pack(_) | Bytecode::PackGeneric(_))).count();
+                let unpack_count = code.code.iter().filter(|i| matches!(i, Bytecode::Unpack(_) | Bytecode::UnpackGeneric(_))).count();
                 
                 if pack_count > unpack_count + 1 {
                     issues.push(SecurityIssue {
@@ -612,12 +721,17 @@ pub struct VectorOverflowDetector;
 impl SecurityDetector for VectorOverflowDetector {
     fn id(&self) -> &'static str { "SUI-016" }
     fn name(&self) -> &'static str { "Vector Overflow" }
-    fn description(&self) -> &'static str { "Detects vector overflow in Sui context" }
+    fn description(&self) -> &'static str { "Detects vector overflow in Sui context for financial functions" }
     fn default_severity(&self) -> Severity { Severity::High }
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
         for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
             if let Some(code) = &func_def.code {
+                // Only check financial functions
+                if !is_financial_function(ctx, func_def) {
+                    continue;
+                }
+                
                 for (i, instr) in code.code.iter().enumerate() {
                     if matches!(instr, Bytecode::VecPushBack(_)) {
                         let has_limit = code.code.iter()
@@ -627,11 +741,11 @@ impl SecurityDetector for VectorOverflowDetector {
                         
                         if !has_limit {
                             issues.push(SecurityIssue {
-                                id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Medium,
-                                title: "Vector push without capacity check".to_string(),
-                                description: "Pushing to vector without checking size limit".to_string(),
+                                id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::High,
+                                title: "Vector push without capacity check in financial function".to_string(),
+                                description: "Pushing to vector without checking size limit in financial function".to_string(),
                                 location: create_loc(ctx, idx, i as u16), source_code: None,
-                                recommendation: "Check vector length before push. Implement maximum size.".to_string(),
+                                recommendation: "Check vector length before push in financial functions. Implement maximum size.".to_string(),
                                 references: vec![], metadata: std::collections::HashMap::new(),
                             });
                         }
@@ -656,10 +770,10 @@ impl SecurityDetector for ObjectReferenceLeakDetector {
             if let Some(code) = &func_def.code {
                 // Look for global borrows that might leak
                 for (i, instr) in code.code.iter().enumerate() {
-                    if matches!(instr, Bytecode::ImmBorrowGlobal(_) | Bytecode::MutBorrowGlobal(_)) {
+                    if matches!(instr, Bytecode::ImmBorrowGlobal(_) | Bytecode::MutBorrowGlobal(_) | Bytecode::ImmBorrowGlobalGeneric(_) | Bytecode::MutBorrowGlobalGeneric(_)) {
                         // Check if stored in struct
                         let may_leak = code.code.get(i+1..i+4).map(|s| {
-                            s.iter().any(|b| matches!(b, Bytecode::Pack(_)))
+                            s.iter().any(|b| matches!(b, Bytecode::Pack(_) | Bytecode::PackGeneric(_)))
                         }).unwrap_or(false);
                         
                         if may_leak {
@@ -705,8 +819,8 @@ impl SecurityDetector for IdCollisionDetector {
                     });
                     
                     if calls_object_new {
-                        // Check if it has a TxContext parameter
-                        let has_tx_context_param = func_handle.parameters.0 as usize > 0; // Heuristic
+                        // Check if it has a TxContext parameter by type, not just count
+                        let has_tx_context_param = has_tx_context_parameter(ctx, func_handle);
                         
                         if !has_tx_context_param {
                             issues.push(SecurityIssue {
@@ -742,7 +856,7 @@ impl SecurityDetector for UidReuseDetector {
             if func_name.as_str().contains("delete") || func_name.as_str().contains("destroy") {
                 if let Some(code) = &func_def.code {
                     // After unpacking, UID should be properly deleted
-                    let has_unpack = code.code.iter().any(|i| matches!(i, Bytecode::Unpack(_)));
+                    let has_unpack = code.code.iter().any(|i| matches!(i, Bytecode::Unpack(_) | Bytecode::UnpackGeneric(_)));
                     let consumes_all_fields = code.code.iter().filter(|i| {
                         matches!(i, Bytecode::Pop)
                     }).count() > 0;
@@ -919,7 +1033,38 @@ impl SecurityDetector for UnprotectedSharedObjectMutationDetector {
                             }
                         }
                         
-                        if performs_write && !has_sender_check {
+                        // Check if this is a legitimate burn function (which is safe as it requires ownership of the token)
+                        let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
+                        let func_name = ctx.module.identifier_at(func_handle.name).as_str().to_lowercase();
+                        
+                        // Skip if it's a legitimate burn function that operates on Coin<T>
+                        let is_legitimate_burn = func_name.contains("burn") && {
+                            let sig = &ctx.module.signatures[func_handle.parameters.0 as usize];
+                            sig.0.iter().any(|param| {
+                                if let SignatureToken::MutableReference(inner) = param {
+                                    if let SignatureToken::Struct(s_idx) | SignatureToken::StructInstantiation(s_idx, _) = &**inner {
+                                        let s_handle = &ctx.module.struct_handles[s_idx.0 as usize];
+                                        let s_name = ctx.module.identifier_at(s_handle.name).as_str().to_lowercase();
+                                        s_name.contains("treasurycapwrapper") || s_name.contains("wrapper")
+                                    } else {
+                                        false
+                                    }
+                                } else {
+                                    false
+                                }
+                            }) && sig.0.iter().any(|param| {
+                                // Check if there's a Coin<T> parameter that must be owned by the caller
+                                if let SignatureToken::Struct(s_idx) | SignatureToken::StructInstantiation(s_idx, _) = param {
+                                    let s_handle = &ctx.module.struct_handles[s_idx.0 as usize];
+                                    let s_name = ctx.module.identifier_at(s_handle.name).as_str().to_lowercase();
+                                    s_name.contains("coin")
+                                } else {
+                                    false
+                                }
+                            })
+                        };
+                        
+                        if performs_write && !has_sender_check && !is_legitimate_burn {
                             issues.push(SecurityIssue {
                                 id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::High,
                                 title: self.name().to_string(),
@@ -989,7 +1134,7 @@ pub struct FakeBalanceAccountingDetector;
 impl SecurityDetector for FakeBalanceAccountingDetector {
     fn id(&self) -> &'static str { "SUI-024" }
     fn name(&self) -> &'static str { "Fake Balance Accounting" }
-    fn description(&self) -> &'static str { "Detects structs using 'u64' for balance without backing 'Coin' or 'Balance' objects" }
+    fn description(&self) -> &'static str { "Detects structs using 'u64' for balance without backing 'Coin' or 'Balance' objects in financial functions" }
     fn default_severity(&self) -> Severity { Severity::Critical }
 
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
@@ -999,6 +1144,7 @@ impl SecurityDetector for FakeBalanceAccountingDetector {
             let handle = &ctx.module.struct_handles[struct_def.struct_handle.0 as usize];
             let struct_name = ctx.module.identifier_at(handle.name).as_str().to_lowercase();
             
+            // Check if this is a financial-related struct
             if struct_name.contains("vault") || struct_name.contains("pool") || struct_name.contains("bank") || struct_name.contains("account") {
                 let mut has_u64_balance = false;
                 let mut has_real_funds = false;
@@ -1130,7 +1276,7 @@ pub struct ZeroAmountDepositDetector;
 impl SecurityDetector for ZeroAmountDepositDetector {
     fn id(&self) -> &'static str { "SUI-026" }
     fn name(&self) -> &'static str { "Zero-Amount Deposit State Poisoning" }
-    fn description(&self) -> &'static str { "Detects deposit functions that allow zero-amount inputs" }
+    fn description(&self) -> &'static str { "Detects deposit functions that allow zero-amount inputs in financial functions" }
     fn default_severity(&self) -> Severity { Severity::Medium }
 
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
@@ -1140,6 +1286,11 @@ impl SecurityDetector for ZeroAmountDepositDetector {
             let func_name = ctx.module.identifier_at(func_handle.name).as_str().to_lowercase();
             
             if func_name.contains("deposit") || func_name.contains("add_liquidity") {
+                // Only check financial functions
+                if !is_financial_function(ctx, func_def) {
+                    continue;
+                }
+                
                 if let Some(code) = &func_def.code {
                     let mut checks_amount = false;
                     for (i, instr) in code.code.iter().enumerate() {
@@ -1154,7 +1305,7 @@ impl SecurityDetector for ZeroAmountDepositDetector {
                     
                     if !checks_amount {
                         issues.push(SecurityIssue {
-                            id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Medium,
+                            id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::High,
                             title: self.name().to_string(),
                             description: format!("Function '{}' allows zero-amount deposits. This can lead to state poisoning, unnecessary vector growth, and potential logic exploitation in reward calculations.", func_name),
                             location: create_loc(ctx, idx, 0), source_code: None,
@@ -1199,14 +1350,68 @@ impl SecurityDetector for CapabilityTheaterDetector {
                 let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
                 let signature = &ctx.module.signatures[func_handle.parameters.0 as usize];
                 
+                // Check if this struct is used as a parameter in any function
                 for param in &signature.0 {
                     let mut t = param;
                     while let SignatureToken::Reference(inner) | SignatureToken::MutableReference(inner) = t { t = inner; }
                     if let SignatureToken::Struct(idx) | SignatureToken::StructInstantiation(idx, _) = t {
                         if idx.0 == s_idx {
-                            // Struct is used as parameter, now check if the function is a state modifier
+                            // Check if the function actually uses the capability parameter
+                            if let Some(code) = &func_def.code {
+                                for instr in &code.code {
+                                    match instr {
+                                        Bytecode::MoveLoc(loc_idx) | Bytecode::CopyLoc(loc_idx) | Bytecode::ImmBorrowLoc(loc_idx) | Bytecode::MutBorrowLoc(loc_idx) => {
+                                            let param_sig = &signature.0;
+                                            if (*loc_idx as usize) < param_sig.len() {
+                                                let param_type = &param_sig[*loc_idx as usize];
+                                                let mut pt = param_type;
+                                                while let SignatureToken::Reference(inner) | SignatureToken::MutableReference(inner) = pt { pt = inner; }
+                                                if let SignatureToken::Struct(check_idx) | SignatureToken::StructInstantiation(check_idx, _) = pt {
+                                                    if check_idx.0 == s_idx {
+                                                        is_used = true;
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            
+                            // Also check if it's used in assert statements or access control
                             if func_name_is_sensitive(ctx.module.identifier_at(func_handle.name).as_str()) {
-                                is_used = true;
+                                if let Some(code) = &func_def.code {
+                                    for instr in &code.code {
+                                        if let Some(called_func) = crate::utils::get_function_name(instr, &ctx.module) {
+                                            if called_func.to_string().contains("tx_context::sender") || called_func.to_string().contains("ctx::sender") {
+                                                is_used = true;
+                                                break;
+                                            }
+                                        }
+                                        if matches!(instr, Bytecode::Abort | Bytecode::BrTrue(_) | Bytecode::BrFalse(_)) {
+                                            is_used = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            // Check if capability is used in comparisons or assertions
+                            if !is_used {
+                                if let Some(code) = &func_def.code {
+                                    for instr in &code.code {
+                                        if matches!(instr, Bytecode::Eq | Bytecode::Neq) {
+                                            // Check if comparison involves the capability parameter
+                                            // This would indicate the capability is being used for auth checks
+                                            is_used = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            if is_used {
                                 break;
                             }
                         }
@@ -1233,6 +1438,25 @@ impl SecurityDetector for CapabilityTheaterDetector {
 fn func_name_is_sensitive(name: &str) -> bool {
     let n = name.to_lowercase();
     n.contains("drain") || n.contains("withdraw") || n.contains("set_") || n.contains("update_") || n.contains("emergency") || n.contains("pause")
+}
+
+fn has_tx_context_parameter(ctx: &DetectionContext, func_handle: &move_binary_format::file_format::FunctionHandle) -> bool {
+    let param_types = &ctx.module.signatures[func_handle.parameters.0 as usize];
+    
+    param_types.0.iter().any(|param| {
+        if let SignatureToken::Struct(s_idx) = param {
+            let struct_handle = &ctx.module.struct_handles[s_idx.0 as usize];
+            let module_handle = &ctx.module.module_handles[struct_handle.module.0 as usize];
+            let module_name = ctx.module.identifier_at(module_handle.name);
+            let struct_name = ctx.module.identifier_at(struct_handle.name);
+            
+            // Check if this is TxContext from the sui framework
+            module_name.as_str().to_lowercase().contains("tx_context") && 
+            struct_name.as_str().to_lowercase().contains("txcontext")
+        } else {
+            false
+        }
+    })
 }
 
 // ========== 28. REFERENCE EXPOSURE ==========
@@ -1483,12 +1707,17 @@ pub struct PrecisionLossDetector;
 impl SecurityDetector for PrecisionLossDetector {
     fn id(&self) -> &'static str { "SUI-032" }
     fn name(&self) -> &'static str { "Precision Loss in Financial Calculations" }
-    fn description(&self) -> &'static str { "Detects division before multiplication which leads to precision loss" }
+    fn description(&self) -> &'static str { "Detects division before multiplication which leads to precision loss in financial functions" }
     fn default_severity(&self) -> Severity { Severity::Medium }
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
         for func_def in &ctx.module.function_defs {
             if let Some(code) = &func_def.code {
+                // Only check financial functions
+                if !is_financial_function(ctx, func_def) {
+                    continue;
+                }
+                
                 let mut div_index = None;
                 for (i, instr) in code.code.iter().enumerate() {
                     if matches!(instr, Bytecode::Div) {
@@ -1498,11 +1727,11 @@ impl SecurityDetector for PrecisionLossDetector {
                         if let Some(_) = div_index {
                             let func_name = ctx.module.identifier_at(ctx.module.function_handle_at(func_def.function).name).as_str();
                             issues.push(SecurityIssue {
-                                id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Low,
+                                id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::High,
                                 title: self.name().to_string(),
                                 description: format!("Function '{}' performs division before multiplication. This can lead to significant precision loss in financial calculations.", func_name),
                                 location: create_loc(ctx, 0, i as u16), source_code: None,
-                                recommendation: "Always perform multiplication before division when possible to preserve precision.".to_string(),
+                                recommendation: "Always perform multiplication before division when possible to preserve precision in financial functions.".to_string(),
                                 references: vec![], metadata: std::collections::HashMap::new(),
                             });
                             break;
@@ -1520,13 +1749,18 @@ pub struct PhantomAuthParameterDetector;
 impl SecurityDetector for PhantomAuthParameterDetector {
     fn id(&self) -> &'static str { "SUI-033" }
     fn name(&self) -> &'static str { "Phantom Authorization Parameter" }
-    fn description(&self) -> &'static str { "Detects capability/authorization parameters that exist but are never actually used in the function body" }
+    fn description(&self) -> &'static str { "Detects capability/authorization parameters that exist but are never actually used in the function body in financial functions" }
     fn default_severity(&self) -> Severity { Severity::Critical }
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
         
         for func_def in &ctx.module.function_defs {
             if func_def.visibility != Visibility::Public && !func_def.is_entry {
+                continue;
+            }
+            
+            // Only check financial functions
+            if !is_financial_function(ctx, func_def) {
                 continue;
             }
             

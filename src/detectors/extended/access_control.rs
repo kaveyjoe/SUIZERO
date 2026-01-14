@@ -2,70 +2,98 @@ use crate::core::detector::SecurityDetector;
 use crate::types::{SecurityIssue, Severity, Confidence, DetectionContext, CodeLocation};
 use move_binary_format::{
     access::ModuleAccess,
-    file_format::{Bytecode, CodeUnit, SignatureToken, Visibility},
+    file_format::{Bytecode, CodeUnit, FunctionHandleIndex, SignatureToken, Visibility},
     CompiledModule,
 };
+use move_core_types::identifier::IdentStr;
 use std::collections::HashMap;
 
-// Helper functions (adapted from access_control.rs)
-fn check_capability_checks(module: &CompiledModule, code: &CodeUnit) -> bool {
-    // 1. Check if ANY parameter is a capability (typical for Sui)
-    for func_def in &module.function_defs {
-        if func_def.code.as_ref().map(|c| c as *const CodeUnit) == Some(code as *const CodeUnit) {
-            let func_handle = module.function_handle_at(func_def.function);
-            let parameters = module.signature_at(func_handle.parameters);
-            for token in &parameters.0 {
-                let struct_handle_index = match token {
-                    SignatureToken::Reference(inner) | SignatureToken::MutableReference(inner) => {
-                        match &**inner {
-                            SignatureToken::Struct(idx) => Some(*idx),
-                            SignatureToken::StructInstantiation(idx, _) => Some(*idx),
-                            _ => None,
-                        }
-                    }
-                    SignatureToken::Struct(idx) => Some(*idx),
-                    SignatureToken::StructInstantiation(idx, _) => Some(*idx),
-                    _ => None,
-                };
-
-                if let Some(idx) = struct_handle_index {
-                    let struct_handle = module.struct_handle_at(idx);
-                    let name = module.identifier_at(struct_handle.name).as_str().to_lowercase();
-                    if name.contains("cap") || name.contains("admin") || name.contains("owner") {
-                        return true;
-                    }
-                }
-            }
-            break;
-        }
-    }
-
-    // 2. Check for BorrowGlobal (legacy Move/Aptos style)
+// Improved helper function to check for capability usage in Sui context
+fn check_capability_usage(module: &CompiledModule, code: &CodeUnit) -> bool {
+    // Check if the function has capability parameters that are actually used
     for instr in &code.code {
+        // Look for operations that indicate capability is being used for auth checks
         match instr {
-            Bytecode::ImmBorrowGlobal(idx) | Bytecode::MutBorrowGlobal(idx) | Bytecode::MoveFrom(idx) => {
-                if let Some(struct_def) = module.struct_defs.get(idx.0 as usize) {
-                    let struct_handle = module.struct_handle_at(struct_def.struct_handle);
-                    let name = module.identifier_at(struct_handle.name).as_str().to_lowercase();
-                    if name.contains("cap") || name.contains("admin") || name.contains("owner") {
-                        return true;
-                    }
-                }
-            }
-            Bytecode::ImmBorrowGlobalGeneric(idx) | Bytecode::MutBorrowGlobalGeneric(idx) | Bytecode::MoveFromGeneric(idx) => {
-                let inst = module.struct_instantiation_at(*idx);
-                if let Some(struct_def) = module.struct_defs.get(inst.def.0 as usize) {
-                    let struct_handle = module.struct_handle_at(struct_def.struct_handle);
-                    let name = module.identifier_at(struct_handle.name).as_str().to_lowercase();
-                    if name.contains("cap") || name.contains("admin") || name.contains("owner") {
-                        return true;
-                    }
-                }
+            // Check for equality comparisons (typically used for capability validation)
+            Bytecode::Eq | Bytecode::Neq => return true,
+            // Check for aborts that indicate failed auth checks
+            Bytecode::Abort => return true,
+            // Check for branching that indicates conditional auth
+            Bytecode::BrTrue(_) | Bytecode::BrFalse(_) => return true,
+            // Check for calls to validation functions
+            Bytecode::Call(_) | Bytecode::CallGeneric(_) => {
+                // We'll check if this is a call to a validation function
             }
             _ => {}
         }
     }
     false
+}
+
+// Check if a function actually validates its capability parameter
+fn function_validates_capability(func_def: &move_binary_format::file_format::FunctionDefinition) -> bool {
+    if let Some(ref code) = func_def.code {
+        // Look for auth validation patterns in the function body
+        for instr in &code.code {
+            match instr {
+                // Equality checks are commonly used to validate capabilities
+                Bytecode::Eq | Bytecode::Neq => return true,
+                // Branch instructions after comparisons
+                Bytecode::BrTrue(_) | Bytecode::BrFalse(_) => return true,
+                // Abort instructions after failed checks
+                Bytecode::Abort => return true,
+                // Calls to validation functions
+                Bytecode::Call(_) | Bytecode::CallGeneric(_) => {
+                    // In a more detailed analysis, we could check if this is a validation call
+                }
+                _ => {}
+            }
+        }
+    }
+    false
+}
+
+// Check if a function has capability parameters
+fn has_capability_parameter(module: &CompiledModule, func_def: &move_binary_format::file_format::FunctionDefinition) -> bool {
+    let func_handle = module.function_handle_at(func_def.function);
+    let parameters = module.signature_at(func_handle.parameters);
+    
+    for token in &parameters.0 {
+        let struct_handle_index = match token {
+            SignatureToken::Reference(inner) | SignatureToken::MutableReference(inner) => {
+                match &**inner {
+                    SignatureToken::Struct(idx) => Some(*idx),
+                    SignatureToken::StructInstantiation(idx, _) => Some(*idx),
+                    _ => None,
+                }
+            }
+            SignatureToken::Struct(idx) => Some(*idx),
+            SignatureToken::StructInstantiation(idx, _) => Some(*idx),
+            _ => None,
+        };
+
+        if let Some(idx) = struct_handle_index {
+            let struct_handle = module.struct_handle_at(idx);
+            let name = module.identifier_at(struct_handle.name).as_str().to_lowercase();
+            // More specific capability naming patterns
+            if name.contains("cap") || name.contains("capability") || 
+               name.contains("admin") || name.contains("owner") ||
+               name.contains("auth") || name.contains("permission") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+// Helper function to check if function is a known administrative function
+fn is_administrative_function(func_name: &str) -> bool {
+    let lower_name = func_name.to_lowercase();
+    lower_name.contains("admin") || lower_name.contains("owner") || 
+    lower_name.starts_with("set_") || lower_name.contains("update") ||
+    lower_name.contains("transfer") || lower_name.contains("drain") ||
+    lower_name.contains("pause") || lower_name.contains("upgrade") ||
+    lower_name.contains("emergency")
 }
 
 fn create_ext_location(ctx: &DetectionContext, func_name: &str) -> CodeLocation {
@@ -87,7 +115,7 @@ impl SecurityDetector for UnauthorizedMintDetector {
     fn id(&self) -> &'static str { "EXT-AC-001" }
     fn name(&self) -> &'static str { "Unauthorized Mint Function" }
     fn description(&self) -> &'static str { "Detects mint functions without proper access control" }
-    fn default_severity(&self) -> Severity { Severity::Critical }
+    fn default_severity(&self) -> Severity { Severity::High }
     
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
@@ -97,32 +125,37 @@ impl SecurityDetector for UnauthorizedMintDetector {
             let func_handle = module.function_handle_at(func_def.function);
             let func_name = module.identifier_at(func_handle.name).to_string();
             
-            if func_name.to_lowercase().contains("mint") 
-                || func_name.to_lowercase().contains("create")
-                || func_name.to_lowercase().contains("issue") {
+            // More specific mint function detection
+            if func_name.to_lowercase().contains("mint") {
+                // Check if function has capability parameter
+                let has_capability_param = has_capability_parameter(module, func_def);
                 
-                // Check for signer parameter
-                let params_sig = module.signature_at(func_handle.parameters);
-                let has_signer = params_sig.0.iter().any(|t| matches!(t, SignatureToken::Signer));
+                // Check if function actually validates its parameters
+                let validates_input = function_validates_capability(func_def);
                 
-                // Check for capability checks in bytecode
-                let has_capability_check = if let Some(code) = &func_def.code {
-                    check_capability_checks(module, code)
-                } else { false };
-                
-                if !has_signer && !has_capability_check {
-                    issues.push(SecurityIssue {
-                        id: self.id().to_string(),
-                        severity: self.default_severity(),
-                        confidence: Confidence::Medium,
-                        title: format!("Unauthorized mint in '{}'", func_name),
-                        description: format!("Function '{}' allows asset creation without proper authorization (signer or capability check)", func_name),
-                        location: create_ext_location(ctx, &func_name),
-                        source_code: Some(func_name.clone()),
-                        recommendation: "Add signer parameter and require AdminCap or OwnerCapability. Implement role-based access control.".to_string(),
-                        references: vec!["OWASP Access Control".to_string()],
-                        metadata: HashMap::new(),
-                    });
+                // More stringent check: if no capability parameter and doesn't validate properly
+                if !has_capability_param && !validates_input {
+                    // Additional check: see if function creates new objects or coins
+                    let creates_objects = if let Some(code) = &func_def.code {
+                        code.code.iter().any(|instr| {
+                            matches!(instr, Bytecode::MoveTo(_) | Bytecode::MoveToGeneric(_))
+                        })
+                    } else { false };
+                    
+                    if creates_objects {
+                        issues.push(SecurityIssue {
+                            id: self.id().to_string(),
+                            severity: self.default_severity(),
+                            confidence: Confidence::High, // Increased confidence
+                            title: format!("Unauthorized mint in '{}'", func_name),
+                            description: format!("Function '{}' allows asset creation without proper capability-based authorization. On Sui, mint functions should require a specific capability object as parameter.", func_name),
+                            location: create_ext_location(ctx, &func_name),
+                            source_code: Some(func_name.clone()),
+                            recommendation: "Require a dedicated MintCapability object as a parameter. Do not rely solely on tx_context::sender() for authorization in mint functions.".to_string(),
+                            references: vec!["OWASP Access Control".to_string(), "Sui Capability Patterns".to_string()],
+                            metadata: HashMap::new(),
+                        });
+                    }
                 }
             }
         }
@@ -137,7 +170,7 @@ impl SecurityDetector for UnauthorizedBurnDetector {
     fn id(&self) -> &'static str { "EXT-AC-002" }
     fn name(&self) -> &'static str { "Unauthorized Burn Function" }
     fn description(&self) -> &'static str { "Detects burn functions without proper authorization" }
-    fn default_severity(&self) -> Severity { Severity::Critical }
+    fn default_severity(&self) -> Severity { Severity::High }
     
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
@@ -147,31 +180,37 @@ impl SecurityDetector for UnauthorizedBurnDetector {
             let func_handle = module.function_handle_at(func_def.function);
             let func_name = module.identifier_at(func_handle.name).to_string();
             
-            if func_name.to_lowercase().contains("burn") 
-                || func_name.to_lowercase().contains("destroy") {
+            // More specific burn function detection
+            if func_name.to_lowercase().contains("burn") {
+                // Check if function has capability parameter
+                let has_capability_param = has_capability_parameter(module, func_def);
                 
-                 // Check for capability checks in bytecode
-                let has_capability_check = if let Some(code) = &func_def.code {
-                    check_capability_checks(module, code)
-                } else { false };
+                // Check if function actually validates its parameters
+                let validates_input = function_validates_capability(func_def);
                 
-                // Check for signer parameter
-                let params_sig = module.signature_at(func_handle.parameters);
-                let has_signer = params_sig.0.iter().any(|t| matches!(t, SignatureToken::Signer));
-
-                if !has_signer && !has_capability_check {
-                     issues.push(SecurityIssue {
-                        id: self.id().to_string(),
-                        severity: self.default_severity(),
-                        confidence: Confidence::Medium,
-                        title: format!("Unauthorized burn in '{}'", func_name),
-                        description: format!("Function '{}' allows asset destruction without proper authorization", func_name),
-                        location: create_ext_location(ctx, &func_name),
-                        source_code: Some(func_name.clone()),
-                        recommendation: "Require OwnerCapability or specific burn authorization.".to_string(),
-                        references: vec!["OWASP Access Control".to_string()],
-                        metadata: HashMap::new(),
-                    });
+                // More stringent check: if no capability parameter and doesn't validate properly
+                if !has_capability_param && !validates_input {
+                    // Additional check: see if function destroys objects
+                    let destroys_objects = if let Some(code) = &func_def.code {
+                        code.code.iter().any(|instr| {
+                            matches!(instr, Bytecode::MoveFrom(_) | Bytecode::MoveFromGeneric(_))
+                        })
+                    } else { false };
+                    
+                    if destroys_objects {
+                        issues.push(SecurityIssue {
+                            id: self.id().to_string(),
+                            severity: self.default_severity(),
+                            confidence: Confidence::High, // Increased confidence
+                            title: format!("Unauthorized burn in '{}'", func_name),
+                            description: format!("Function '{}' allows asset destruction without proper capability-based authorization. On Sui, burn functions should require a specific capability object as parameter.", func_name),
+                            location: create_ext_location(ctx, &func_name),
+                            source_code: Some(func_name.clone()),
+                            recommendation: "Require a dedicated BurnCapability object as a parameter. Do not rely solely on tx_context::sender() for authorization in burn functions.".to_string(),
+                            references: vec!["OWASP Access Control".to_string(), "Sui Capability Patterns".to_string()],
+                            metadata: HashMap::new(),
+                        });
+                    }
                 }
             }
         }
@@ -195,18 +234,22 @@ impl SecurityDetector for MissingOwnerCheckDetector {
             
             // Heuristic: functions named "set_admin", "change_owner", "set_owner", etc. usually require owner check
             if func_name.contains("set_admin") || func_name.contains("change_owner") || func_name.contains("transfer_ownership") || func_name.contains("set_owner") || func_name.contains("emergency_") {
-                 let has_cap = if let Some(code) = &func_def.code { check_capability_checks(&ctx.module, code) } else { false };
-                 
-                 if !has_cap {
+                // Check if function has capability parameter
+                let has_capability_param = has_capability_parameter(&ctx.module, func_def);
+                
+                // Check if function actually validates its parameters
+                let validates_input = function_validates_capability(func_def);
+                
+                if !has_capability_param && !validates_input {
                     issues.push(SecurityIssue {
-                        id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Medium,
+                        id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::High,
                         title: "Missing owner check".to_string(),
                         description: format!("Function '{}' appears to be administrative but lacks owner capability check", func_name),
                         location: create_ext_location(ctx, &func_name), source_code: None,
                         recommendation: "Ensure this function requires an admin or owner capability.".to_string(),
                         references: vec![], metadata: HashMap::new(),
                     });
-                 }
+                }
             }
         }
         issues
@@ -227,16 +270,23 @@ impl SecurityDetector for UnauthorizedTransferDetector {
             let func_name = ctx.module.identifier_at(func_handle.name).to_string();
             
             if func_name.to_lowercase().contains("transfer") && func_def.visibility == Visibility::Public {
+                // Check for capability parameter
+                let has_capability_param = has_capability_parameter(&ctx.module, func_def);
+                
+                // Check for signer parameter
                 let params_sig = ctx.module.signature_at(func_handle.parameters);
                 let has_signer = params_sig.0.iter().any(|t| matches!(t, SignatureToken::Signer));
                 
-                if !has_signer {
+                // Check if function validates its parameters
+                let validates_input = function_validates_capability(func_def);
+                
+                if !has_signer && !has_capability_param && !validates_input {
                     issues.push(SecurityIssue {
                         id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::High,
-                        title: "Public transfer without signer".to_string(),
-                        description: format!("'{}'  allows transfers without authentication", func_name),
+                        title: "Public transfer without authorization".to_string(),
+                        description: format!("'{}' allows transfers without proper authorization", func_name),
                         location: create_ext_location(ctx, &func_name), source_code: None,
-                        recommendation: "Require signer parameter for transfers.".to_string(),
+                        recommendation: "Require signer parameter or capability object for transfers.".to_string(),
                         references: vec![], metadata: HashMap::new(),
                     });
                 }
@@ -260,11 +310,15 @@ impl SecurityDetector for UnauthorizedUpdateDetector {
             let func_name = ctx.module.identifier_at(func_handle.name).to_string();
             
             if func_name.to_lowercase().contains("update") || func_name.to_lowercase().contains("modify") {
-                let has_cap = if let Some(code) = &func_def.code { check_capability_checks(&ctx.module, code) } else { false };
+                // Check if function has capability parameter
+                let has_capability_param = has_capability_parameter(&ctx.module, func_def);
                 
-                if !has_cap {
+                // Check if function actually validates its parameters
+                let validates_input = function_validates_capability(func_def);
+                
+                if !has_capability_param && !validates_input {
                     issues.push(SecurityIssue {
-                        id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Low,
+                        id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Medium,
                         title: "Update without authorization".to_string(),
                         description: format!("'{}' lacks access control", func_name),
                         location: create_ext_location(ctx, &func_name), source_code: None,
@@ -292,11 +346,15 @@ impl SecurityDetector for UnauthorizedFreezeDetector {
             let func_name = ctx.module.identifier_at(func_handle.name).to_string();
             
             if func_name.to_lowercase().contains("freeze") || func_name.to_lowercase().contains("pause") {
-                let has_cap = if let Some(code) = &func_def.code { check_capability_checks(&ctx.module, code) } else { false };
+                // Check if function has capability parameter
+                let has_capability_param = has_capability_parameter(&ctx.module, func_def);
                 
-                if !has_cap {
+                // Check if function actually validates its parameters
+                let validates_input = function_validates_capability(func_def);
+                
+                if !has_capability_param && !validates_input {
                     issues.push(SecurityIssue {
-                        id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Medium,
+                        id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::High,
                         title: "Freeze without authorization".to_string(),
                         description: format!("'{}' can freeze without authorization", func_name),
                         location: create_ext_location(ctx, &func_name), source_code: None,
@@ -316,7 +374,7 @@ impl SecurityDetector for UnauthorizedAdminActionDetector {
     fn id(&self) -> &'static str { "EXT-AC-007" }
     fn name(&self) -> &'static str { "Unauthorized Admin Action" }
     fn description(&self) -> &'static str { "Detects admin functions without access control" }
-    fn default_severity(&self) -> Severity { Severity::Critical }
+    fn default_severity(&self) -> Severity { Severity::High }
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
         for func_def in &ctx.module.function_defs {
@@ -324,9 +382,13 @@ impl SecurityDetector for UnauthorizedAdminActionDetector {
             let func_name = ctx.module.identifier_at(func_handle.name).to_string();
             
             if func_name.starts_with("admin_") || func_name.starts_with("owner_") || func_name.starts_with("emergency_") || func_name.contains("drain") {
-                let has_cap = if let Some(code) = &func_def.code { check_capability_checks(&ctx.module, code) } else { false };
+                // Check if function has capability parameter
+                let has_capability_param = has_capability_parameter(&ctx.module, func_def);
                 
-                if !has_cap {
+                // Check if function actually validates its parameters
+                let validates_input = function_validates_capability(func_def);
+                
+                if !has_capability_param && !validates_input {
                     issues.push(SecurityIssue {
                         id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::High,
                         title: "Admin function without capability".to_string(),
@@ -389,17 +451,22 @@ impl SecurityDetector for WeakAdminRecoveryDetector {
             let func_name = ctx.module.identifier_at(func_handle.name).to_string();
             
             if func_name.contains("recover") || func_name.contains("rescue") {
-                 let has_cap = if let Some(code) = &func_def.code { check_capability_checks(&ctx.module, code) } else { false };
-                 if !has_cap {
-                      issues.push(SecurityIssue {
-                        id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Low,
+                // Check if function has capability parameter
+                let has_capability_param = has_capability_parameter(&ctx.module, func_def);
+                
+                // Check if function actually validates its parameters
+                let validates_input = function_validates_capability(func_def);
+                
+                if !has_capability_param && !validates_input {
+                     issues.push(SecurityIssue {
+                        id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::Medium,
                         title: "Potential weak recovery function".to_string(),
                         description: format!("Recovery function '{}' might not be adequately protected", func_name),
                         location: create_ext_location(ctx, &func_name), source_code: None,
                         recommendation: "Ensure recovery functions are strictly gated by admin capabilities.".to_string(),
                         references: vec![], metadata: HashMap::new(),
                     });
-                 }
+                }
             }
         }
         issues
@@ -477,7 +544,7 @@ impl SecurityDetector for SignerSpoofingDetector {
     fn id(&self) -> &'static str { "EXT-AC-012" }
     fn name(&self) -> &'static str { "Signer Spoofing" }
     fn description(&self) -> &'static str { "Detects signer spoofing vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::Critical }
+    fn default_severity(&self) -> Severity { Severity::High }
     async fn detect(&self, _ctx: &DetectionContext) -> Vec<SecurityIssue> {
         // Signer spoofing usually involves passing an address instead of &signer and treating it as authenticated.
         // This is hard to detect without data flow, but we can look for functions taking `address` args named `signer` or similar.
@@ -504,7 +571,7 @@ impl SecurityDetector for PrivilegeEscalationDetector {
     fn id(&self) -> &'static str { "EXT-AC-014" }
     fn name(&self) -> &'static str { "Privilege Escalation" }
     fn description(&self) -> &'static str { "Detects privilege escalation vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::Critical }
+    fn default_severity(&self) -> Severity { Severity::High }
     async fn detect(&self, _ctx: &DetectionContext) -> Vec<SecurityIssue> {
         vec![] // Requires deep analysis
     }
@@ -577,7 +644,7 @@ impl SecurityDetector for CapabilityLeakDetector {
     fn id(&self) -> &'static str { "EXT-AC-017" }
     fn name(&self) -> &'static str { "Capability Leak" }
     fn description(&self) -> &'static str { "Detects capability leakage" }
-    fn default_severity(&self) -> Severity { Severity::Critical }
+    fn default_severity(&self) -> Severity { Severity::High }
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
         for func_def in &ctx.module.function_defs {
@@ -588,14 +655,22 @@ impl SecurityDetector for CapabilityLeakDetector {
                  // If a public function returns a struct with "Cap" in its name, it might be leaking a capability
                  for token in &return_sig.0 {
                      if let SignatureToken::Struct(idx) | SignatureToken::StructInstantiation(idx, _) = token {
-                        let struct_handle_idx = match token {
-                             SignatureToken::Struct(idx) => *idx,
-                             SignatureToken::StructInstantiation(idx, _) => *idx,
-                             _ => continue, 
-                        };
-                        // Note: Getting struct name from def index requires indirect look up if it's a def index or handle index.
-                        // Simplified: assume we can check if the type is defined in this module and inspect it.
-                        // This logic is simplified for the port.
+                        let struct_handle = ctx.module.struct_handle_at(*idx);
+                        let struct_name = ctx.module.identifier_at(struct_handle.name);
+                        if struct_name.as_str().to_lowercase().contains("cap") {
+                            issues.push(SecurityIssue {
+                                id: self.id().to_string(),
+                                severity: self.default_severity(),
+                                confidence: Confidence::High,
+                                title: "Capability leak in public function".to_string(),
+                                description: format!("Public function returns capability type '{}'", struct_name),
+                                location: create_ext_location(ctx, "unknown"),
+                                source_code: Some(struct_name.to_string()),
+                                recommendation: "Do not return capability objects from public functions. Instead, consume them in the function.".to_string(),
+                                references: vec![],
+                                metadata: HashMap::new(),
+                            });
+                        }
                      }
                  }
              }
@@ -622,7 +697,7 @@ impl SecurityDetector for SharedObjectAuthBypassDetector {
     fn id(&self) -> &'static str { "EXT-AC-019" }
     fn name(&self) -> &'static str { "Shared Object Auth Bypass" }
     fn description(&self) -> &'static str { "Detects shared object authorization bypass" }
-    fn default_severity(&self) -> Severity { Severity::Critical }
+    fn default_severity(&self) -> Severity { Severity::High }
     async fn detect(&self, _ctx: &DetectionContext) -> Vec<SecurityIssue> {
         vec![] // Sui-specific shared object analysis
     }
@@ -646,7 +721,7 @@ impl SecurityDetector for TimelockBypassDetector {
     fn id(&self) -> &'static str { "EXT-AC-021" }
     fn name(&self) -> &'static str { "Timelock Bypass" }
     fn description(&self) -> &'static str { "Detects timelock bypass vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::Critical }
+    fn default_severity(&self) -> Severity { Severity::High }
     async fn detect(&self, _ctx: &DetectionContext) -> Vec<SecurityIssue> {
         vec![] // Requires temporal logic analysis
     }

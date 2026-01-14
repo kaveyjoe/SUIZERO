@@ -5,8 +5,126 @@ use crate::core::detector::SecurityDetector;
 use crate::types::{SecurityIssue, Severity, Confidence, DetectionContext, CodeLocation};
 use move_binary_format::{
     access::ModuleAccess,
-    file_format::{Bytecode, FunctionDefinition},
+    file_format::{Bytecode, FunctionDefinition, SignatureToken},
 };
+
+// Helper function to check if function has Coin<T> parameters
+fn has_coin_parameters(ctx: &DetectionContext, func_def: &FunctionDefinition) -> bool {
+    let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
+    let params_sig = &ctx.module.signatures[func_handle.parameters.0 as usize];
+    
+    params_sig.0.iter().any(|param| {
+        match param {
+            SignatureToken::Struct(s_idx) | 
+            SignatureToken::StructInstantiation(s_idx, _) => {
+                let struct_handle = &ctx.module.struct_handles[s_idx.0 as usize];
+                let struct_name = ctx.module.identifier_at(struct_handle.name);
+                struct_name.as_str().to_lowercase().contains("coin")
+            },
+            SignatureToken::Reference(inner) | SignatureToken::MutableReference(inner) => {
+                match &**inner {
+                    SignatureToken::Struct(s_idx) | 
+                    SignatureToken::StructInstantiation(s_idx, _) => {
+                        let struct_handle = &ctx.module.struct_handles[s_idx.0 as usize];
+                        let struct_name = ctx.module.identifier_at(struct_handle.name);
+                        struct_name.as_str().to_lowercase().contains("coin")
+                    },
+                    _ => false
+                }
+            },
+            _ => false
+        }
+    })
+}
+
+// Helper function to check if function has a specific Coin<T> parameter (singular)
+fn has_coin_parameter(ctx: &DetectionContext, func_def: &FunctionDefinition) -> bool {
+    let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
+    let params_sig = &ctx.module.signatures[func_handle.parameters.0 as usize];
+    
+    params_sig.0.iter().any(|param| {
+        match param {
+            SignatureToken::Struct(s_idx) | 
+            SignatureToken::StructInstantiation(s_idx, _) => {
+                let struct_handle = &ctx.module.struct_handles[s_idx.0 as usize];
+                let struct_name = ctx.module.identifier_at(struct_handle.name);
+                struct_name.as_str().to_lowercase().contains("coin")
+            },
+            SignatureToken::Reference(inner) | SignatureToken::MutableReference(inner) => {
+                match &**inner {
+                    SignatureToken::Struct(s_idx) | 
+                    SignatureToken::StructInstantiation(s_idx, _) => {
+                        let struct_handle = &ctx.module.struct_handles[s_idx.0 as usize];
+                        let struct_name = ctx.module.identifier_at(struct_handle.name);
+                        struct_name.as_str().to_lowercase().contains("coin")
+                    },
+                    _ => false
+                }
+            },
+            _ => false
+        }
+    })
+}
+
+// Helper function to check if function is financial in nature
+fn is_financial_function(ctx: &DetectionContext, func_def: &FunctionDefinition) -> bool {
+    let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
+    let func_name = ctx.module.identifier_at(func_handle.name);
+    let func_name_lower = func_name.as_str().to_lowercase();
+    
+    // Check for financial keywords in function name
+    let has_financial_keywords = [
+        "swap", "trade", "buy", "sell", "mint", "burn", "transfer", "deposit",
+        "withdraw", "stake", "unstake", "claim", "reward", "vest", "unlock",
+        "fund", "pool", "liquidity", "lp", "pair", "router", "factory",
+        "coin", "token", "usdc", "usdt", "eth", "btc", "weth", "wrapped",
+        "amm", "dex", "farm", "harvest", "governance", "vote", "treasury"
+    ].iter().any(|&keyword| func_name_lower.contains(keyword));
+    
+    // Check for financial parameters
+    let has_financial_params = {
+        let params_sig = &ctx.module.signatures[func_handle.parameters.0 as usize];
+        params_sig.0.iter().any(|param| {
+            match param {
+                SignatureToken::Struct(s_idx) | 
+                SignatureToken::StructInstantiation(s_idx, _) => {
+                    let struct_handle = &ctx.module.struct_handles[s_idx.0 as usize];
+                    let struct_name = ctx.module.identifier_at(struct_handle.name);
+                    let struct_name_lower = struct_name.as_str().to_lowercase();
+                    struct_name_lower.contains("coin") || struct_name_lower.contains("token") || 
+                    struct_name_lower.contains("balance") || struct_name_lower.contains("wallet")
+                },
+                SignatureToken::Reference(inner) | SignatureToken::MutableReference(inner) => {
+                    match &**inner {
+                        SignatureToken::Struct(s_idx) | 
+                        SignatureToken::StructInstantiation(s_idx, _) => {
+                            let struct_handle = &ctx.module.struct_handles[s_idx.0 as usize];
+                            let struct_name = ctx.module.identifier_at(struct_handle.name);
+                            let struct_name_lower = struct_name.as_str().to_lowercase();
+                            struct_name_lower.contains("coin") || struct_name_lower.contains("token") || 
+                            struct_name_lower.contains("balance") || struct_name_lower.contains("wallet")
+                        },
+                        _ => false
+                    }
+                },
+                _ => false
+            }
+        })
+    };
+    
+    // Check for financial operations in bytecode
+    let has_financial_ops = if let Some(code) = &func_def.code {
+        code.code.iter().any(|instr| {
+            if let Some(called_func) = get_function_name(instr, &ctx.module) {
+                let called_lower = called_func.to_lowercase();
+                called_lower.contains("balance") || called_lower.contains("transfer") || 
+                called_lower.contains("coin") || called_lower.contains("token")
+            } else { false }
+        })
+    } else { false };
+    
+    has_financial_keywords || has_financial_params || has_financial_ops
+}
 
 // Helper function to create location
 fn create_location(ctx: &DetectionContext, func_def: &FunctionDefinition, idx: u16) -> CodeLocation {
@@ -44,7 +162,7 @@ impl SecurityDetector for FlashLoanAttackDetector {
     fn id(&self) -> &'static str { "FIN-001" }
     fn name(&self) -> &'static str { "Flash Loan Attack" }
     fn description(&self) -> &'static str { "Detects flash loan attack vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::Critical }
+    fn default_severity(&self) -> Severity { Severity::High }
     
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
@@ -53,40 +171,43 @@ impl SecurityDetector for FlashLoanAttackDetector {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            // Check for lending/borrowing patterns
-            if func_name.as_str().contains("borrow") || func_name.as_str().contains("lend") || 
-               func_name.as_str().contains("loan") {
-                
-                if let Some(code) = &func_def.code {
-                    // Check for price oracle usage without flash loan protection
-                    let has_oracle = code.code.iter().any(|instr| {
-                        if let Some(called_func) = get_function_name(instr, &ctx.module) {
-                            called_func.contains("price") || called_func.contains("oracle")
-                        } else { false }
-                    });
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) {
+                // Check for lending/borrowing patterns
+                if func_name.as_str().contains("borrow") || func_name.as_str().contains("lend") || 
+                   func_name.as_str().contains("loan") {
                     
-                    let has_protection = code.code.iter().any(|instr| {
-                        if let Some(called_func) = get_function_name(instr, &ctx.module) {
-                            called_func.contains("twap") || called_func.contains("time_weighted") ||
-                            called_func.contains("flash_loan_check")
-                        } else { false }
-                    });
-                    
-                    if has_oracle && !has_protection {
-                        issues.push(SecurityIssue {
-                            id: self.id().to_string(),
-                            severity: self.default_severity(),
-                            confidence: Confidence::High,
-                            title: format!("Flash loan vulnerability in '{}'", func_name),
-                            description: "Lending function uses price oracles without flash loan protection".to_string(),
-                            location: create_location(ctx, func_def, 0),
-                            source_code: Some(func_name.to_string()),
-                            recommendation: "Use time-weighted average prices (TWAP). Implement transaction volume limits. Add minimum time requirements for loan positions.".to_string(),
-                            references: vec![
-                                "https://blog.openzeppelin.com/exploiting-math-in-smart-contracts-flash-loans-and-manipulation/".to_string(),
-                            ],
-                            metadata: std::collections::HashMap::new(),
+                    if let Some(code) = &func_def.code {
+                        // Check for price oracle usage without flash loan protection
+                        let has_oracle = code.code.iter().any(|instr| {
+                            if let Some(called_func) = get_function_name(instr, &ctx.module) {
+                                called_func.contains("price") || called_func.contains("oracle")
+                            } else { false }
                         });
+                        
+                        let has_protection = code.code.iter().any(|instr| {
+                            if let Some(called_func) = get_function_name(instr, &ctx.module) {
+                                called_func.contains("twap") || called_func.contains("time_weighted") ||
+                                called_func.contains("flash_loan_check")
+                            } else { false }
+                        });
+                        
+                        if has_oracle && !has_protection {
+                            issues.push(SecurityIssue {
+                                id: self.id().to_string(),
+                                severity: self.default_severity(),
+                                confidence: Confidence::High,
+                                title: format!("Flash loan vulnerability in '{}'", func_name),
+                                description: "Lending function uses price oracles without flash loan protection".to_string(),
+                                location: create_location(ctx, func_def, 0),
+                                source_code: Some(func_name.to_string()),
+                                recommendation: "Use time-weighted average prices (TWAP). Implement transaction volume limits. Add minimum time requirements for loan positions.".to_string(),
+                                references: vec![
+                                    "https://blog.openzeppelin.com/exploiting-math-in-smart-contracts-flash-loans-and-manipulation/".to_string(),
+                                ],
+                                metadata: std::collections::HashMap::new(),
+                            });
+                        }
                     }
                 }
             }
@@ -104,7 +225,7 @@ impl SecurityDetector for FlashMintAttackDetector {
     fn id(&self) -> &'static str { "FIN-002" }
     fn name(&self) -> &'static str { "Flash Mint Attack" }
     fn description(&self) -> &'static str { "Detects flash mint attack vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::Critical }
+    fn default_severity(&self) -> Severity { Severity::High }
     
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
@@ -113,7 +234,8 @@ impl SecurityDetector for FlashMintAttackDetector {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("mint") || func_name.as_str().contains("create_") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && (func_name.as_str().contains("mint") || func_name.as_str().contains("create_")) {
                 if let Some(code) = &func_def.code {
                     // Check if it's minting a capability (should be handled by AC detectors)
                     let is_cap_mint = code.code.iter().any(|instr| {
@@ -127,6 +249,67 @@ impl SecurityDetector for FlashMintAttackDetector {
 
                     if is_cap_mint { continue; }
 
+                    // Check if function has proper authorization (e.g., requires capability)
+                    let has_auth_check = {
+                        let mut found_sender_check = false;
+                        let mut found_assert = false;
+                        
+                        for instr in &code.code {
+                            if let Some(called_func) = get_function_name(instr, &ctx.module) {
+                                let name = called_func.to_string().to_lowercase();
+                                if name.contains("tx_context::sender") || name.contains("ctx::sender") {
+                                    found_sender_check = true;
+                                }
+                                if name.contains("assert") {
+                                    found_assert = true;
+                                }
+                            }
+                            
+                            // Check for comparison operations that might be part of authorization checks
+                            if matches!(instr, Bytecode::Eq | Bytecode::Neq) {
+                                found_assert = true; // Likely part of an assert statement
+                            }
+                        }
+                        
+                        // Check function parameters to see if it accepts a capability
+                        let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
+                        let func_name = ctx.module.identifier_at(func_handle.name);
+                        let func_name_lower = func_name.as_str().to_lowercase();
+                        
+                        // Skip if this is LP minting (not token minting)
+                        let is_lp_mint = func_name_lower.contains("mint") && (
+                            has_coin_parameters(ctx, func_def) ||
+                            func_name_lower.contains("pair") ||
+                            func_name_lower.contains("liquidity") ||
+                            func_name_lower.contains("lp")
+                        );
+                        
+                        if is_lp_mint {
+                            continue; // Skip LP minting functions
+                        }
+                        
+                        let params_sig = &ctx.module.signatures[func_handle.parameters.0 as usize];
+                        let has_cap_param = params_sig.0.iter().any(|param| {
+                            if let SignatureToken::Reference(inner) | SignatureToken::MutableReference(inner) = param {
+                                if let SignatureToken::Struct(s_idx) | SignatureToken::StructInstantiation(s_idx, _) = &**inner {
+                                    let idx = s_idx.0 as usize;
+                                    if idx < ctx.module.struct_defs.len() {
+                                        let struct_def = &ctx.module.struct_defs[idx];
+                                        let handle_idx = struct_def.struct_handle.0 as usize;
+                                        if handle_idx < ctx.module.struct_handles.len() {
+                                            let struct_handle = &ctx.module.struct_handles[handle_idx];
+                                            let struct_name = ctx.module.identifier_at(struct_handle.name).as_str().to_lowercase();
+                                            struct_name.contains("cap") || struct_name.contains("admin") || struct_name.contains("owner")
+                                        } else { false }
+                                    } else { false }
+                                } else { false }
+                            } else { false }
+                        });
+                        
+                        // Authorization is confirmed if we have both sender check and assert, OR if function has capability parameter
+                        (found_sender_check && found_assert) || has_cap_param
+                    };
+                    
                     // Check for supply cap
                     let has_supply_cap = code.code.iter().any(|instr| {
                         if let Some(called_func) = get_function_name(instr, &ctx.module) {
@@ -144,16 +327,17 @@ impl SecurityDetector for FlashMintAttackDetector {
                         } else { false }
                     });
                     
-                    if !has_supply_cap || !has_time_delay {
+                    // Only flag as vulnerability if no authorization checks AND no supply/time limits
+                    if !has_auth_check && (!has_supply_cap || !has_time_delay) {
                         issues.push(SecurityIssue {
                             id: self.id().to_string(),
                             severity: self.default_severity(),
                             confidence: Confidence::High,
                             title: format!("Flash mint vulnerability in '{}'", func_name),
-                            description: "Minting function lacks supply caps or time delays".to_string(),
+                            description: "Minting function lacks proper authorization checks or supply/time limits".to_string(),
                             location: create_location(ctx, func_def, 0),
                             source_code: Some(func_name.to_string()),
-                            recommendation: "Implement minting limits per transaction. Add time delays between mints. Require collateral for minting.".to_string(),
+                            recommendation: "Implement minting limits per transaction. Add time delays between mints. Require proper capability-based authorization.".to_string(),
                             references: vec![
                                 "https://ethereum.org/en/developers/tutorials/erc20-permit-transfer-from/".to_string(),
                             ],
@@ -176,7 +360,7 @@ impl SecurityDetector for InterestRateManipulationDetector {
     fn id(&self) -> &'static str { "FIN-003" }
     fn name(&self) -> &'static str { "Interest Rate Manipulation" }
     fn description(&self) -> &'static str { "Detects interest rate manipulation vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::High }
+    fn default_severity(&self) -> Severity { Severity::Medium }
     
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
@@ -185,7 +369,8 @@ impl SecurityDetector for InterestRateManipulationDetector {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("interest") || func_name.as_str().contains("rate") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && (func_name.as_str().contains("interest") || func_name.as_str().contains("rate")) {
                 if let Some(code) = &func_def.code {
                     let has_governance = code.code.iter().any(|instr| {
                         if let Some(called_func) = get_function_name(instr, &ctx.module) {
@@ -224,7 +409,7 @@ impl SecurityDetector for LiquidityDrainDetector {
     fn id(&self) -> &'static str { "FIN-004" }
     fn name(&self) -> &'static str { "Liquidity Drain" }
     fn description(&self) -> &'static str { "Detects liquidity drain vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::Critical }
+    fn default_severity(&self) -> Severity { Severity::High }
     
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
@@ -233,28 +418,34 @@ impl SecurityDetector for LiquidityDrainDetector {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("withdraw") || func_name.as_str().contains("remove_liquidity") {
-                if let Some(code) = &func_def.code {
-                    let has_limit = code.code.iter().any(|instr| {
-                        if let Some(called_func) = get_function_name(instr, &ctx.module) {
-                            called_func.contains("limit") || called_func.contains("cap") ||
-                            called_func.contains("max_withdrawal")
-                        } else { false }
-                    });
-                    
-                    if !has_limit {
-                        issues.push(SecurityIssue {
-                            id: self.id().to_string(),
-                            severity: self.default_severity(),
-                            confidence: Confidence::High,
-                            title: format!("Liquidity drain risk in '{}'", func_name),
-                            description: "Withdrawal function lacks limits allowing complete liquidity drain".to_string(),
-                            location: create_location(ctx, func_def, 0),
-                            source_code: Some(func_name.to_string()),
-                            recommendation: "Implement withdrawal limits. Add time locks for large withdrawals. Use bonding curves for liquidity.".to_string(),
-                            references: vec![],
-                            metadata: std::collections::HashMap::new(),
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) {
+                // Check if this is a canonical AMM burn function (which is safe by design)
+                let is_canonical_burn = func_name.as_str().contains("burn") && has_coin_parameter(ctx, func_def);
+                
+                if (func_name.as_str().contains("withdraw") || func_name.as_str().contains("remove_liquidity") || func_name.as_str().contains("burn")) && !is_canonical_burn {
+                    if let Some(code) = &func_def.code {
+                        let has_limit = code.code.iter().any(|instr| {
+                            if let Some(called_func) = get_function_name(instr, &ctx.module) {
+                                called_func.contains("limit") || called_func.contains("cap") ||
+                                called_func.contains("max_withdrawal")
+                            } else { false }
                         });
+                        
+                        if !has_limit {
+                            issues.push(SecurityIssue {
+                                id: self.id().to_string(),
+                                severity: self.default_severity(),
+                                confidence: Confidence::High,
+                                title: format!("Liquidity drain risk in '{}'", func_name),
+                                description: "Withdrawal function lacks limits allowing complete liquidity drain".to_string(),
+                                location: create_location(ctx, func_def, 0),
+                                source_code: Some(func_name.to_string()),
+                                recommendation: "Implement withdrawal limits. Add time locks for large withdrawals. Use bonding curves for liquidity.".to_string(),
+                                references: vec![],
+                                metadata: std::collections::HashMap::new(),
+                            });
+                        }
                     }
                 }
             }
@@ -281,7 +472,8 @@ impl SecurityDetector for SlippageAttackDetector {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("swap") || func_name.as_str().contains("trade") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && (func_name.as_str().contains("swap") || func_name.as_str().contains("trade")) {
                 if let Some(code) = &func_def.code {
                     let has_slippage_protection = code.code.iter().any(|instr| {
                         if let Some(called_func) = get_function_name(instr, &ctx.module) {
@@ -322,7 +514,7 @@ impl SecurityDetector for PriceImpactAbuseDetector {
     fn id(&self) -> &'static str { "FIN-006" }
     fn name(&self) -> &'static str { "Price Impact Abuse" }
     fn description(&self) -> &'static str { "Detects price impact abuse vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::High }
+    fn default_severity(&self) -> Severity { Severity::Medium }
     
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
@@ -331,7 +523,8 @@ impl SecurityDetector for PriceImpactAbuseDetector {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("swap") || func_name.as_str().contains("buy") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && (func_name.as_str().contains("swap") || func_name.as_str().contains("buy")) {
                 if let Some(code) = &func_def.code {
                     let has_impact_limit = code.code.iter().any(|instr| {
                         if let Some(called_func) = get_function_name(instr, &ctx.module) {
@@ -369,18 +562,19 @@ impl SecurityDetector for ArbitrageExploitationDetector {
     fn id(&self) -> &'static str { "FIN-007" }
     fn name(&self) -> &'static str { "Arbitrage Exploitation" }
     fn description(&self) -> &'static str { "Detects arbitrage exploitation vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::Medium }
+    fn default_severity(&self) -> Severity { Severity::Low }
     
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
         
-        // Check for multiple price sources without synchronization
+        // Check for multiple price sources without synchronization in financial functions
         let mut price_functions = Vec::new();
         for func_def in &ctx.module.function_defs {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("get_price") || func_name.as_str().contains("price_of") {
+            // Only consider financial functions
+            if is_financial_function(ctx, func_def) && (func_name.as_str().contains("get_price") || func_name.as_str().contains("price_of")) {
                 price_functions.push(func_name.to_string());
             }
         }
@@ -389,7 +583,7 @@ impl SecurityDetector for ArbitrageExploitationDetector {
             issues.push(SecurityIssue {
                 id: self.id().to_string(),
                 severity: self.default_severity(),
-                confidence: Confidence::Medium,
+                confidence: Confidence::Low,
                 title: "Arbitrage opportunity detected".to_string(),
                 description: format!("Multiple price sources ({}) may enable arbitrage", price_functions.len()),
                 location: create_module_location(ctx),
@@ -412,7 +606,7 @@ impl SecurityDetector for EconomicCensorshipDetector {
     fn id(&self) -> &'static str { "FIN-008" }
     fn name(&self) -> &'static str { "Economic Censorship" }
     fn description(&self) -> &'static str { "Detects economic censorship vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::Medium }
+    fn default_severity(&self) -> Severity { Severity::Low }
     
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
@@ -421,7 +615,8 @@ impl SecurityDetector for EconomicCensorshipDetector {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("vote") || func_name.as_str().contains("governance") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && (func_name.as_str().contains("vote") || func_name.as_str().contains("governance")) {
                 if let Some(code) = &func_def.code {
                     let uses_token_weight = code.code.iter().any(|instr| {
                         if let Some(called_func) = get_function_name(instr, &ctx.module) {
@@ -440,7 +635,7 @@ impl SecurityDetector for EconomicCensorshipDetector {
                         issues.push(SecurityIssue {
                             id: self.id().to_string(),
                             severity: self.default_severity(),
-                            confidence: Confidence::Medium,
+                            confidence: Confidence::Low,
                             title: format!("Whale dominance risk in '{}'", func_name),
                             description: "Voting power based solely on token balance enables whale control".to_string(),
                             location: create_location(ctx, func_def, 0),
@@ -466,7 +661,7 @@ impl SecurityDetector for TokenImbalanceDetector {
     fn id(&self) -> &'static str { "FIN-009" }
     fn name(&self) -> &'static str { "Token Imbalance" }
     fn description(&self) -> &'static str { "Detects token imbalance vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::High }
+    fn default_severity(&self) -> Severity { Severity::Medium }
     
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
@@ -475,7 +670,8 @@ impl SecurityDetector for TokenImbalanceDetector {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("add_liquidity") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && func_name.as_str().contains("add_liquidity") {
                 if let Some(code) = &func_def.code {
                     let requires_balanced = code.code.iter().any(|instr| {
                         if let Some(called_func) = get_function_name(instr, &ctx.module) {
@@ -487,7 +683,7 @@ impl SecurityDetector for TokenImbalanceDetector {
                         issues.push(SecurityIssue {
                             id: self.id().to_string(),
                             severity: self.default_severity(),
-                            confidence: Confidence::Medium,
+                            confidence: Confidence::Low,
                             title: format!("Token imbalance risk in '{}'", func_name),
                             description: "Liquidity provision allows one-sided deposits".to_string(),
                             location: create_location(ctx, func_def, 0),
@@ -513,7 +709,7 @@ impl SecurityDetector for RewardManipulationDetector {
     fn id(&self) -> &'static str { "FIN-010" }
     fn name(&self) -> &'static str { "Reward Manipulation" }
     fn description(&self) -> &'static str { "Detects reward manipulation vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::High }
+    fn default_severity(&self) -> Severity { Severity::Medium }
     
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
@@ -522,7 +718,8 @@ impl SecurityDetector for RewardManipulationDetector {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("claim") || func_name.as_str().contains("reward") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && (func_name.as_str().contains("claim") || func_name.as_str().contains("reward")) {
                 if let Some(code) = &func_def.code {
                     let has_rate_limit = code.code.iter().any(|instr| {
                         if let Some(called_func) = get_function_name(instr, &ctx.module) {
@@ -535,7 +732,7 @@ impl SecurityDetector for RewardManipulationDetector {
                         issues.push(SecurityIssue {
                             id: self.id().to_string(),
                             severity: self.default_severity(),
-                            confidence: Confidence::Medium,
+                            confidence: Confidence::Low,
                             title: format!("Reward manipulation in '{}'", func_name),
                             description: "Reward claiming lacks rate limits or cooldowns".to_string(),
                             location: create_location(ctx, func_def, 0),
@@ -561,7 +758,7 @@ impl SecurityDetector for StakingExploitDetector {
     fn id(&self) -> &'static str { "FIN-011" }
     fn name(&self) -> &'static str { "Staking Exploit" }
     fn description(&self) -> &'static str { "Detects staking exploit vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::High }
+    fn default_severity(&self) -> Severity { Severity::Medium }
     
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
@@ -570,7 +767,8 @@ impl SecurityDetector for StakingExploitDetector {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("stake") || func_name.as_str().contains("unstake") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && (func_name.as_str().contains("stake") || func_name.as_str().contains("unstake")) {
                 if let Some(code) = &func_def.code {
                     let has_lock_period = code.code.iter().any(|instr| {
                         if let Some(called_func) = get_function_name(instr, &ctx.module) {
@@ -583,7 +781,7 @@ impl SecurityDetector for StakingExploitDetector {
                         issues.push(SecurityIssue {
                             id: self.id().to_string(),
                             severity: self.default_severity(),
-                            confidence: Confidence::Medium,
+                            confidence: Confidence::Low,
                             title: format!("Instant unstaking in '{}'", func_name),
                             description: "Unstaking lacks lock period enabling flash staking attacks".to_string(),
                             location: create_location(ctx, func_def, 0),
@@ -609,7 +807,7 @@ impl SecurityDetector for YieldFarmingAttackDetector {
     fn id(&self) -> &'static str { "FIN-012" }
     fn name(&self) -> &'static str { "Yield Farming Attack" }
     fn description(&self) -> &'static str { "Detects yield farming attack vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::High }
+    fn default_severity(&self) -> Severity { Severity::Medium }
     
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
@@ -618,7 +816,8 @@ impl SecurityDetector for YieldFarmingAttackDetector {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("farm") || func_name.as_str().contains("harvest") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && (func_name.as_str().contains("farm") || func_name.as_str().contains("harvest")) {
                 if let Some(code) = &func_def.code {
                     let has_anti_farm_hop = code.code.iter().any(|instr| {
                         if let Some(called_func) = get_function_name(instr, &ctx.module) {
@@ -630,7 +829,7 @@ impl SecurityDetector for YieldFarmingAttackDetector {
                         issues.push(SecurityIssue {
                             id: self.id().to_string(),
                             severity: self.default_severity(),
-                            confidence: Confidence::Medium,
+                            confidence: Confidence::Low,
                             title: format!("Yield farming exploit in '{}'", func_name),
                             description: "Farming rewards lack minimum duration enabling farm hopping".to_string(),
                             location: create_location(ctx, func_def, 0),
@@ -656,7 +855,7 @@ impl SecurityDetector for LiquidityPoolDrainDetector {
     fn id(&self) -> &'static str { "FIN-013" }
     fn name(&self) -> &'static str { "Liquidity Pool Drain" }
     fn description(&self) -> &'static str { "Detects liquidity pool drain vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::Critical }
+    fn default_severity(&self) -> Severity { Severity::High }
     
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
@@ -665,7 +864,8 @@ impl SecurityDetector for LiquidityPoolDrainDetector {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("remove_liquidity") || func_name.as_str().contains("withdraw_pool") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && (func_name.as_str().contains("remove_liquidity") || func_name.as_str().contains("withdraw_pool")) {
                 if let Some(code) = &func_def.code {
                     let has_min_liquidity = code.code.iter().any(|instr| {
                         if let Some(called_func) = get_function_name(instr, &ctx.module) {
@@ -703,7 +903,7 @@ impl SecurityDetector for AMMManipulationDetector {
     fn id(&self) -> &'static str { "FIN-014" }
     fn name(&self) -> &'static str { "AMM Manipulation" }
     fn description(&self) -> &'static str { "Detects AMM manipulation vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::High }
+    fn default_severity(&self) -> Severity { Severity::Medium }
     
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
@@ -712,7 +912,8 @@ impl SecurityDetector for AMMManipulationDetector {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("swap") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && func_name.as_str().contains("swap") {
                 if let Some(code) = &func_def.code {
                     // Check for constant product formula usage
                     let uses_constant_product = code.code.iter().any(|instr| {
@@ -755,7 +956,7 @@ impl SecurityDetector for ConstantProductExploitDetector {
     fn id(&self) -> &'static str { "FIN-015" }
     fn name(&self) -> &'static str { "Constant Product Exploit" }
     fn description(&self) -> &'static str { "Detects constant product formula exploit vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::High }
+    fn default_severity(&self) -> Severity { Severity::Medium }
     
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
@@ -764,7 +965,8 @@ impl SecurityDetector for ConstantProductExploitDetector {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("swap") || func_name.as_str().contains("get_amount") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && (func_name.as_str().contains("swap") || func_name.as_str().contains("get_amount")) {
                 if let Some(code) = &func_def.code {
                     // Look for division operations (common in AMM formulas)
                     let has_division = code.code.iter().any(|instr| {
@@ -807,7 +1009,7 @@ impl SecurityDetector for BondingCurveAttackDetector {
     fn id(&self) -> &'static str { "FIN-016" }
     fn name(&self) -> &'static str { "Bonding Curve Attack" }
     fn description(&self) -> &'static str { "Detects bonding curve attack vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::High }
+    fn default_severity(&self) -> Severity { Severity::Medium }
     
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
@@ -816,7 +1018,8 @@ impl SecurityDetector for BondingCurveAttackDetector {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("bonding") || func_name.as_str().contains("curve") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && (func_name.as_str().contains("bonding") || func_name.as_str().contains("curve")) {
                 if let Some(code) = &func_def.code {
                     let has_curve_params = code.code.iter().any(|instr| {
                         matches!(instr, Bytecode::LdU64(_) | Bytecode::LdU128(_))
@@ -861,7 +1064,8 @@ impl SecurityDetector for VestingScheduleBypassDetector {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("vest") || func_name.as_str().contains("unlock") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && (func_name.as_str().contains("vest") || func_name.as_str().contains("unlock")) {
                 if let Some(code) = &func_def.code {
                     let has_time_check = code.code.iter().any(|instr| {
                         if let Some(called_func) = get_function_name(instr, &ctx.module) {
@@ -900,7 +1104,7 @@ impl SecurityDetector for AirdropExploitationDetector {
     fn id(&self) -> &'static str { "FIN-018" }
     fn name(&self) -> &'static str { "Airdrop Exploitation" }
     fn description(&self) -> &'static str { "Detects airdrop exploitation vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::Medium }
+    fn default_severity(&self) -> Severity { Severity::Low }
     
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
@@ -909,7 +1113,8 @@ impl SecurityDetector for AirdropExploitationDetector {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("airdrop") || func_name.as_str().contains("claim") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && (func_name.as_str().contains("airdrop") || func_name.as_str().contains("claim")) {
                 if let Some(code) = &func_def.code {
                     let has_sybil_protection = code.code.iter().any(|instr| {
                         if let Some(called_func) = get_function_name(instr, &ctx.module) {
@@ -922,7 +1127,7 @@ impl SecurityDetector for AirdropExploitationDetector {
                         issues.push(SecurityIssue {
                             id: self.id().to_string(),
                             severity: self.default_severity(),
-                            confidence: Confidence::Medium,
+                            confidence: Confidence::Low,
                             title: format!("Airdrop sybil attack in '{}'", func_name),
                             description: "Airdrop lacks sybil resistance enabling multiple claims".to_string(),
                             location: create_location(ctx, func_def, 0),
@@ -948,7 +1153,7 @@ impl SecurityDetector for TokenWhitelistBypassDetector {
     fn id(&self) -> &'static str { "FIN-019" }
     fn name(&self) -> &'static str { "Token Whitelist Bypass" }
     fn description(&self) -> &'static str { "Detects token whitelist bypass vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::Medium }
+    fn default_severity(&self) -> Severity { Severity::Low }
     
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
@@ -957,7 +1162,8 @@ impl SecurityDetector for TokenWhitelistBypassDetector {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("whitelist") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && func_name.as_str().contains("whitelist") {
                 if let Some(code) = &func_def.code {
                     let has_validation = code.code.iter().any(|instr| {
                         matches!(instr, Bytecode::BrTrue(_) | Bytecode::BrFalse(_))
@@ -993,7 +1199,7 @@ impl SecurityDetector for FeeManipulationDetector {
     fn id(&self) -> &'static str { "FIN-020" }
     fn name(&self) -> &'static str { "Fee Manipulation" }
     fn description(&self) -> &'static str { "Detects fee manipulation vulnerabilities" }
-    fn default_severity(&self) -> Severity { Severity::Medium }
+    fn default_severity(&self) -> Severity { Severity::Low }
     
     async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
         let mut issues = Vec::new();
@@ -1002,7 +1208,8 @@ impl SecurityDetector for FeeManipulationDetector {
             let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
             let func_name = ctx.module.identifier_at(func_handle.name);
             
-            if func_name.as_str().contains("set_fee") || func_name.as_str().contains("update_fee") {
+            // Only check financial functions
+            if is_financial_function(ctx, func_def) && (func_name.as_str().contains("set_fee") || func_name.as_str().contains("update_fee")) {
                 if let Some(code) = &func_def.code {
                     let has_bounds_check = code.code.iter().any(|instr| {
                         matches!(instr, Bytecode::Lt | Bytecode::Le | Bytecode::Gt | Bytecode::Ge)
@@ -1019,7 +1226,7 @@ impl SecurityDetector for FeeManipulationDetector {
                         issues.push(SecurityIssue {
                             id: self.id().to_string(),
                             severity: self.default_severity(),
-                            confidence: Confidence::Medium,
+                            confidence: Confidence::Low,
                             title: format!("Fee manipulation in '{}'", func_name),
                             description: "Fee setting lacks bounds checks or governance controls".to_string(),
                             location: create_location(ctx, func_def, 0),
