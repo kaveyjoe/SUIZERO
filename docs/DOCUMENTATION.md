@@ -3,7 +3,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/version-1.0.1-blue.svg?style=for-the-badge" alt="Version">
   <img src="https://img.shields.io/badge/security-A%2B-success.svg?style=for-the-badge" alt="Security Rating">
-  <img src="https://img.shields.io/badge/accuracy-95%25-success.svg?style=for-the-badge" alt="Accuracy">
+  <img src="https://img.shields.io/badge/accuracy-85%25-success.svg?style=for-the-badge" alt="Accuracy">
   <img src="https://img.shields.io/badge/build-passing-success.svg?style=for-the-badge" alt="Build Status">
 </p>
 
