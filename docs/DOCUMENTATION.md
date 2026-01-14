@@ -406,7 +406,7 @@ pub fn get_extended_detectors() -> Vec<Box<dyn SecurityDetector>> {
 ## 📊 Performance & Accuracy
 
 ### Validation Results
-- **Detection Rate**: 95%+ for known vulnerability types
+- **Detection Rate**: 85%+ for known vulnerability types
 - **False Positive Rate**: <10% in production environments  
 - **Performance**: Sub-50ms analysis per contract module
 - **Coverage**: 330+ vulnerability patterns across 15+ categories
