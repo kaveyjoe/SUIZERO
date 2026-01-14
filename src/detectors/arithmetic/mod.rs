@@ -92,6 +92,12 @@ fn is_financial_calculation_function(func_def: &FunctionDefinition, module: &Com
     // Only check functions with clear financial calculation names
     let is_calculation_function = func_name_lower.contains("calculate_") ||
                                  func_name_lower.contains("compute_") ||
+                                 func_name_lower.contains("_reward") ||
+                                 func_name_lower.contains("_calc") ||
+                                 func_name_lower.contains("_rate") ||
+                                 func_name_lower.contains("_percentage") ||
+                                 func_name_lower.contains("_ratio") ||
+                                 func_name_lower.contains("_share") ||
                                  func_name_lower == "calculate" ||
                                  func_name_lower == "compute";
     

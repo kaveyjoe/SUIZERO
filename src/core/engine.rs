@@ -194,7 +194,8 @@ impl DetectionEngine {
             let is_public = func_def.map_or(false, |f| f.visibility == Visibility::Public || f.is_entry);
             
             // Filter out issues in test functions or test modules
-            if config.filter_test_functions {
+            // Only filter if include_test_code is false
+            if !config.include_test_code && config.filter_test_functions {
                 let is_test = issue.location.function_name.contains("_test") ||
                               issue.location.function_name.starts_with("test_") ||
                               issue.location.function_name.contains("test") ||

@@ -1247,6 +1247,55 @@ impl SecurityDetector for PauseFlagIllusionDetector {
                                         break;
                                     }
                                 }
+                                // Also check if field is read but not used in conditional logic
+                                // This catches cases where the field is read but ignored
+                                if code.code.get(i+1..i+15).map(|s| {
+                                    s.iter().any(|b| matches!(b, Bytecode::ReadRef))
+                                }).unwrap_or(false) {
+                                    // Even if read, check if it's actually used for conditional logic
+                                    let has_conditional_use = code.code.iter().skip(i+1).take(25).any(|b| matches!(b, Bytecode::BrTrue(_) | Bytecode::BrFalse(_)));
+                                    if has_conditional_use {
+                                        is_read = true;
+                                        break;
+                                    }
+                                }
+                                
+                                // NEW: Check if field is read but there's a conditional block that doesn't use the field properly
+                                // This catches the 'if (field) { }' pattern where the condition is met but ignored
+                                if code.code.iter().skip(i).take(15).any(|b| matches!(b, Bytecode::ReadRef)) {
+                                    // Check if there's an if statement that reads the field but doesn't branch properly
+                                    // This catches cases like: if (paused) { /* do nothing */ }; // proceed anyway
+                                    let mut has_branch_without_proper_handling = false;
+                                    let mut branch_found = false;
+                                    
+                                    for j in i+1..std::cmp::min(i+20, code.code.len()) {
+                                        if matches!(code.code[j], Bytecode::BrTrue(_) | Bytecode::BrFalse(_)) {
+                                            branch_found = true;
+                                            // Look for a return/abort after the branch
+                                            let mut has_proper_handling = false;
+                                            for k in j+1..std::cmp::min(j+10, code.code.len()) {
+                                                if matches!(code.code[k], Bytecode::Ret | Bytecode::Abort) {
+                                                    // Proper handling found
+                                                    has_proper_handling = true;
+                                                    break;
+                                                }
+                                            }
+                                            if !has_proper_handling {
+                                                has_branch_without_proper_handling = true;
+                                            }
+                                            break;
+                                        }
+                                    }
+                                    
+                                    if branch_found && !has_branch_without_proper_handling {
+                                        // The field is read and properly handled
+                                        is_read = true;
+                                    } else if branch_found && has_branch_without_proper_handling {
+                                        // The field is read in conditional but not handled properly
+                                        // So we keep is_read as false to flag the issue
+                                        is_read = false;
+                                    }
+                                }
                             }
                         }
                     }
@@ -1258,9 +1307,9 @@ impl SecurityDetector for PauseFlagIllusionDetector {
                 issues.push(SecurityIssue {
                     id: self.id().to_string(), severity: self.default_severity(), confidence: Confidence::High,
                     title: self.name().to_string(),
-                    description: format!("The field '{}' is defined and likely settable, but its value is never checked in any conditional logic. This creates a false sense of security where users/auditors believe a 'paused' state exists, but the protocol remains operational regardless.", field_name),
+                    description: format!("The field '{}' is defined and likely settable, but its value is never checked in any conditional logic. This creates a false sense of security where users/auditors believe a 'paused' state exists, but the protocol remains operational regardless. The function checks the flag but proceeds anyway without proper conditional branching.", field_name),
                     location: create_loc(ctx, 0, 0), source_code: None,
-                    recommendation: "Ensure that all critical state-modifying functions check the 'paused' flag: 'assert!(!vault.paused, E_CONTRACT_PAUSED)'.".to_string(),
+                    recommendation: "Ensure that all critical state-modifying functions check the 'paused' flag: 'assert!(!vault.paused, E_CONTRACT_PAUSED)' or properly branch based on the paused state.".to_string(),
                     references: vec![], metadata: std::collections::HashMap::new(),
                 });
             }

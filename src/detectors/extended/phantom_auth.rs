@@ -60,66 +60,164 @@ impl SecurityDetector for PhantomAuthorizationDetector {
                               struct_name.to_lowercase().contains("ticket") ||
                               struct_name.to_lowercase().contains("claim") ||
                               struct_name.to_lowercase().contains("auth") ||
-                              struct_name.to_lowercase().contains("permit");
+                              struct_name.to_lowercase().contains("permit") ||
+                              struct_name.to_lowercase().contains("cap") ||
+                              struct_name.to_lowercase().contains("admin");
             
             if is_auth_like {
-                // Check if the struct has the drop ability (making it forgeable)
+                // Check if this struct has the drop ability (making it forgeable) OR is just used as phantom auth
                 let abilities = struct_handle.abilities;
                 let has_drop = abilities.has_drop();
                 
-                if has_drop {
-                    // Check if there are public functions that return this struct without proper validation
-                    for func_def in &ctx.module.function_defs {
-                        let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
-                        let func_name = ctx.module.identifier_at(func_handle.name);
-                        
-                        // Check if function is public and returns this struct
-                        if matches!(func_def.visibility, move_binary_format::file_format::Visibility::Public) {
-                            let returns_auth_struct = {
-                                let return_sig = &ctx.module.signatures[func_handle.return_.0 as usize];
-                                return_sig.0.iter().any(|ret_type| {
-                                    match ret_type {
-                                        SignatureToken::Struct(ret_struct_idx) | 
-                                        SignatureToken::StructInstantiation(ret_struct_idx, _) => {
-                                            ret_struct_idx.0 as usize == struct_idx
-                                        },
-                                        SignatureToken::Reference(inner) | SignatureToken::MutableReference(inner) => {
-                                            match &**inner {
-                                                SignatureToken::Struct(ret_struct_idx) | 
-                                                SignatureToken::StructInstantiation(ret_struct_idx, _) => {
-                                                    ret_struct_idx.0 as usize == struct_idx
-                                                },
-                                                _ => false
-                                            }
+                // Check if there are functions that take this struct as parameter but don't validate it
+                for func_def in &ctx.module.function_defs {
+                    let func_handle = &ctx.module.function_handles[func_def.function.0 as usize];
+                    let func_name = ctx.module.identifier_at(func_handle.name);
+                    
+                    // Check if function takes the auth struct as parameter
+                    let takes_auth_struct = {
+                        let param_sig = &ctx.module.signatures[func_handle.parameters.0 as usize];
+                        param_sig.0.iter().any(|param| {
+                            match param {
+                                SignatureToken::Struct(param_struct_idx) | 
+                                SignatureToken::StructInstantiation(param_struct_idx, _) => {
+                                    param_struct_idx.0 as usize == struct_idx
+                                },
+                                SignatureToken::Reference(inner) | SignatureToken::MutableReference(inner) => {
+                                    match &**inner {
+                                        SignatureToken::Struct(param_struct_idx) | 
+                                        SignatureToken::StructInstantiation(param_struct_idx, _) => {
+                                            param_struct_idx.0 as usize == struct_idx
                                         },
                                         _ => false
                                     }
-                                })
-                            };
-                            
-                            // Check if function name suggests forging/creation
-                            let is_forging_like = func_name.as_str().contains("forge") ||
-                                                 func_name.as_str().contains("create") ||
-                                                 func_name.as_str().contains("make") ||
-                                                 func_name.as_str().contains("new") ||
-                                                 func_name.as_str().contains("gen");
-                            
-                            if returns_auth_struct && is_forging_like {
-                                issues.push(SecurityIssue {
-                                    id: self.id().to_string(),
-                                    severity: self.default_severity(),
-                                    confidence: Confidence::High,
-                                    title: format!("Phantom authorization structure '{}'", struct_name),
-                                    description: format!("Struct '{}' has drop ability and can be forged through public functions", struct_name),
-                                    location: create_location(ctx, func_def, 0),
-                                    source_code: Some(format!("{} returns {}", func_name, struct_name)),
-                                    recommendation: "Remove drop ability from authorization structures. Require proper validation before issuing authorization tokens. Use cryptographic commitments or issuer tracking.".to_string(),
-                                    references: vec![
-                                        "https://docs.sui.io/concepts/programming-model/capabilities".to_string(),
-                                    ],
-                                    metadata: std::collections::HashMap::new(),
-                                });
+                                },
+                                _ => false
                             }
+                        })
+                    };
+                    
+                    if takes_auth_struct {
+                        // Check if function actually validates the capability
+                        let is_validated = {
+                            if let Some(code) = &func_def.code {
+                                // Look for comparisons or assertions involving the parameter
+                                let mut validated = false;
+                                let mut param_index = 0;
+                                
+                                // Find the index of the auth struct parameter
+                                let param_sig = &ctx.module.signatures[func_handle.parameters.0 as usize];
+                                for (idx, param) in param_sig.0.iter().enumerate() {
+                                    match param {
+                                        SignatureToken::Struct(param_struct_idx) | 
+                                        SignatureToken::StructInstantiation(param_struct_idx, _) => {
+                                            if param_struct_idx.0 as usize == struct_idx {
+                                                param_index = idx;
+                                                break;
+                                            }
+                                        },
+                                        SignatureToken::Reference(inner) | SignatureToken::MutableReference(inner) => {
+                                            match &**inner {
+                                                SignatureToken::Struct(param_struct_idx) | 
+                                                SignatureToken::StructInstantiation(param_struct_idx, _) => {
+                                                    if param_struct_idx.0 as usize == struct_idx {
+                                                        param_index = idx;
+                                                        break;
+                                                    }
+                                                },
+                                                _ => {}
+                                            }
+                                        },
+                                        _ => {}
+                                    }
+                                }
+                                
+                                // Check if the parameter is used in comparisons or assertions
+                                for instr in &code.code {
+                                    match instr {
+                                        Bytecode::MoveLoc(loc_idx) | Bytecode::CopyLoc(loc_idx) | Bytecode::ImmBorrowLoc(loc_idx) | Bytecode::MutBorrowLoc(loc_idx) => {
+                                            if *loc_idx == param_index as u8 {
+                                                // Parameter is moved/copied, check if used in meaningful way
+                                                validated = true;
+                                                break;
+                                            }
+                                        },
+                                        Bytecode::Eq | Bytecode::Neq | Bytecode::Abort | Bytecode::BrTrue(_) | Bytecode::BrFalse(_) => {
+                                            // These instructions often indicate validation
+                                            validated = true;
+                                            break;
+                                        },
+                                        _ => {}
+                                    }
+                                }
+                                validated
+                            } else { false }
+                        };
+                        
+                        if !is_validated {
+                            issues.push(SecurityIssue {
+                                id: self.id().to_string(),
+                                severity: self.default_severity(),
+                                confidence: Confidence::High,
+                                title: format!("Phantom authorization in '{}'", func_name),
+                                description: format!("Function '{}' takes authorization struct '{}' as parameter but does not validate it properly. This gives a false sense of security and may allow unauthorized access to sensitive operations.", func_name, struct_name),
+                                location: create_location(ctx, func_def, 0),
+                                source_code: Some(format!("{} takes {}", func_name, struct_name)),
+                                recommendation: "Properly validate authorization structures by checking their ID or other identifying characteristics. Either use the capability for access control or remove it from the function signature.".to_string(),
+                                references: vec![
+                                    "https://docs.sui.io/concepts/programming-model/capabilities".to_string(),
+                                ],
+                                metadata: std::collections::HashMap::new(),
+                            });
+                        }
+                    }
+                    
+                    // Also check if function returns this struct without proper validation (original logic)
+                    if has_drop {
+                        let returns_auth_struct = {
+                            let return_sig = &ctx.module.signatures[func_handle.return_.0 as usize];
+                            return_sig.0.iter().any(|ret_type| {
+                                match ret_type {
+                                    SignatureToken::Struct(ret_struct_idx) | 
+                                    SignatureToken::StructInstantiation(ret_struct_idx, _) => {
+                                        ret_struct_idx.0 as usize == struct_idx
+                                    },
+                                    SignatureToken::Reference(inner) | SignatureToken::MutableReference(inner) => {
+                                        match &**inner {
+                                            SignatureToken::Struct(ret_struct_idx) | 
+                                            SignatureToken::StructInstantiation(ret_struct_idx, _) => {
+                                                ret_struct_idx.0 as usize == struct_idx
+                                            },
+                                            _ => false
+                                        }
+                                    },
+                                    _ => false
+                                }
+                            })
+                        };
+                        
+                        // Check if function name suggests forging/creation
+                        let is_forging_like = func_name.as_str().contains("forge") ||
+                                             func_name.as_str().contains("create") ||
+                                             func_name.as_str().contains("make") ||
+                                             func_name.as_str().contains("new") ||
+                                             func_name.as_str().contains("gen");
+                        
+                        if returns_auth_struct && is_forging_like {
+                            issues.push(SecurityIssue {
+                                id: self.id().to_string(),
+                                severity: self.default_severity(),
+                                confidence: Confidence::High,
+                                title: format!("Phantom authorization structure '{}'", struct_name),
+                                description: format!("Struct '{}' has drop ability and can be forged through public functions", struct_name),
+                                location: create_location(ctx, func_def, 0),
+                                source_code: Some(format!("{} returns {}", func_name, struct_name)),
+                                recommendation: "Remove drop ability from authorization structures. Require proper validation before issuing authorization tokens. Use cryptographic commitments or issuer tracking.".to_string(),
+                                references: vec![
+                                    "https://docs.sui.io/concepts/programming-model/capabilities".to_string(),
+                                ],
+                                metadata: std::collections::HashMap::new(),
+                            });
                         }
                     }
                 }

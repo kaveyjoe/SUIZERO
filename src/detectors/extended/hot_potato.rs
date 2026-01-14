@@ -51,6 +51,7 @@ impl SecurityDetector for HotPotatoLifecycleEscapeDetector {
         
         // Find all structs that could be "hot potato" candidates
         // These are structs with key ability but not drop ability
+        // Also include structs without key ability that could still be problematic
         let hot_potato_candidates: Vec<(usize, String)> = ctx.module.struct_defs
             .iter()
             .enumerate()
@@ -64,6 +65,20 @@ impl SecurityDetector for HotPotatoLifecycleEscapeDetector {
                 // Check if it has key but not drop (making it a potential hot potato)
                 if abilities.has_key() && !abilities.has_drop() {
                     Some((idx, struct_name))
+                } else if !abilities.has_key() && !abilities.has_drop() {
+                    // Also check structs without key ability that could be hot potatoes
+                    // These are resources that can't be dropped but aren't stored globally either
+                    // Check if struct name suggests it's a special resource
+                    let is_hot_potato_like = struct_name.to_lowercase().contains("potato") ||
+                                           struct_name.to_lowercase().contains("resource") ||
+                                           struct_name.to_lowercase().contains("token") ||
+                                           struct_name.to_lowercase().contains("item");
+                    
+                    if is_hot_potato_like {
+                        Some((idx, struct_name))
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }

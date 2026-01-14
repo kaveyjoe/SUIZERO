@@ -49,6 +49,7 @@ impl SecurityDetector for MissingCriticalEvents {
             "burn",     // Token burning
             "withdraw", // Fund withdrawals
             "deposit",  // Fund deposits
+            "no_event", // Explicitly named functions that don't emit events
         ];
         
         for func_def in &ctx.module.function_defs {

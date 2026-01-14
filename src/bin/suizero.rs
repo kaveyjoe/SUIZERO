@@ -519,23 +519,28 @@ async fn scan_command(args: ScanArgs) -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
+
 async fn list_command(args: ListArgs) -> Result<(), Box<dyn std::error::Error>> {
     let registry = DetectorRegistry::with_all_detectors();
     
     if args.json {
-        // Export as JSON
-        let detectors: Vec<_> = registry.all_detectors()
-            .into_iter()
-            .map(|d| DetectorInfo::from(d))
-            .collect();
+        let mut detectors_json = Vec::new();
+        for d in registry.all_detectors() {
+             detectors_json.push(serde_json::json!({
+                "id": d.id(),
+                "name": d.name(),
+                "description": d.description(),
+                "severity": format!("{:?}", d.default_severity()),
+                "category": d.id().split('-').next().unwrap_or("Unknown")
+            }));
+        }
         
-        let json = serde_json::to_string_pretty(&detectors)?;
+        let json = serde_json::to_string_pretty(&detectors_json)?;
         println!("{}", json);
         return Ok(());
     }
     
     if args.csv {
-        // Export as CSV
         println!("id,name,severity,category,description");
         for detector in registry.all_detectors() {
             println!("\"{}\",\"{}\",\"{:?}\",\"{}\",\"{}\"",
@@ -548,61 +553,83 @@ async fn list_command(args: ListArgs) -> Result<(), Box<dyn std::error::Error>> 
         return Ok(());
     }
     
-    // Display in console
     println!("{}", "=== Available Detectors ===".bold().green());
     
-    let categories = [
-        (Category::AccessControl, 15),
-        (Category::Arithmetic, 18),
-        (Category::Reentrancy, 12),
-        (Category::Objects, 20),
-        (Category::Events, 8),
-        (Category::Oracles, 10),
-        (Category::Randomness, 5),
-        (Category::Timing, 7),
-        (Category::Gas, 5),
-        (Category::Logic, 10),
-    ];
+    let mut categorized: std::collections::BTreeMap<String, Vec<&Box<dyn SecurityDetector>>> = std::collections::BTreeMap::new();
+    
+    for detector in registry.all_detectors() {
+        let prefix = detector.id().split('-').next().unwrap_or("Other");
+        let category_name = match prefix {
+            "AC" => "Access Control",
+            "AR" => "Arithmetic",
+            "RE" => "Reentrancy",
+            "OB" => "Objects",
+            "EV" => "Events",
+            "OR" => "Oracles",
+            "RN" => "Randomness",
+            "TM" => "Timing",
+            "GA" => "Gas",
+            "LG" => "Logic",
+            "SEM" => "Semantic Analysis",
+            "SUI" => "Sui Specific",
+            _ => "Extended/Other",
+        };
+        categorized.entry(category_name.to_string()).or_default().push(detector);
+    }
     
     let mut total = 0;
     
-    for (category, count) in &categories {
+    for (category, mut detectors) in categorized {
         if let Some(filter) = &args.category {
-            if *filter != *category && *filter != Category::All {
-                continue;
-            }
+             let filter_name = filter.display_name();
+             if filter_name != "All Categories" && !category.eq_ignore_ascii_case(filter_name) {
+                 let match_found = match (filter, category.as_str()) {
+                     (Category::AccessControl, "Access Control") => true,
+                     (Category::Arithmetic, "Arithmetic") => true,
+                     (Category::Reentrancy, "Reentrancy") => true,
+                     (Category::Objects, "Objects") => true,
+                     (Category::Events, "Events") => true,
+                     (Category::Oracles, "Oracles") => true,
+                     (Category::Randomness, "Randomness") => true,
+                     (Category::Timing, "Timing") => true,
+                     (Category::Gas, "Gas") => true,
+                     (Category::Logic, "Logic") => true,
+                     _ => false, 
+                 };
+                 
+                 if !match_found {
+                     continue;
+                 }
+             }
         }
         
-        println!("\n{} ({} detectors):", category.display_name().bold(), count);
+        detectors.sort_by(|a, b| a.id().cmp(b.id()));
+        
+        let count = detectors.len();
+        println!("\n{} ({} detectors):", category.bold(), count);
         total += count;
         
         if args.detailed {
-            let detector_ids = category.detector_ids();
-            for (i, id) in detector_ids.iter().enumerate() {
-                if let Some(detector) = registry.get_detector(id) {
-                    let severity = match detector.default_severity() {
-                        Severity::Critical => "CRIT".red(),
-                        Severity::High => "HIGH".yellow(),
-                        Severity::Medium => "MED".cyan(),
-                        Severity::Low => "LOW".green(),
-                        Severity::Info => "INFO".blue(),
-                    };
-                    
-                    println!("  {:3}. [{}] {}: {}", 
-                        i + 1, 
-                        severity, 
-                        detector.id(), 
-                        detector.name());
-                    
-                    if args.detailed {
-                        println!("      {}", detector.description());
-                    }
-                }
+            for (i, detector) in detectors.iter().enumerate() {
+                let severity = match detector.default_severity() {
+                    Severity::Critical => "CRIT".red(),
+                    Severity::High => "HIGH".yellow(),
+                    Severity::Medium => "MED".cyan(),
+                    Severity::Low => "LOW".green(),
+                    Severity::Info => "INFO".blue(),
+                };
+                
+                println!("  {:3}. [{}] {}: {}", 
+                    i + 1, 
+                    severity, 
+                    detector.id(), 
+                    detector.name());
+                
+                println!("      {}", detector.description());
             }
         } else {
-            let detector_ids = category.detector_ids();
-            let ids_str = detector_ids.iter()
-                .map(|id| id.to_string())
+            let ids_str = detectors.iter()
+                .map(|d| d.id())
                 .collect::<Vec<_>>()
                 .join(", ");
             
@@ -610,8 +637,8 @@ async fn list_command(args: ListArgs) -> Result<(), Box<dyn std::error::Error>> 
         }
     }
     
-    println!("\n{}: {} detectors across {} categories", 
-        "Total".bold(), total, categories.len());
+    println!("\n{}: {} detectors", 
+        "Total".bold(), total);
     
     Ok(())
 }
