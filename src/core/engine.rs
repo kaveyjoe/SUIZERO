@@ -81,14 +81,17 @@ impl DetectionEngine {
         // Phase 3: Advanced analysis
         let advanced_issues = self.run_advanced_analysis(&ctx).await;
         
-        // Combine and deduplicate
+        // Combine issues
         let mut all_issues = Vec::new();
         all_issues.extend(detector_issues);
         all_issues.extend(pattern_issues);
         all_issues.extend(advanced_issues);
         
-        // Filter false positives
+        // Filter false positives first
         let all_issues = self.filter_false_positives(all_issues, module, config);
+        
+        // Deduplicate issues
+        let all_issues = self.deduplicate_issues(all_issues);
         
         // Update stats
         self.stats.record_analysis(start_time.elapsed(), all_issues.len());
@@ -168,19 +171,17 @@ impl DetectionEngine {
     }
     
     fn deduplicate_issues(&self, mut issues: Vec<SecurityIssue>) -> Vec<SecurityIssue> {
-        // Sort first
+        // Enhanced deduplication that considers similar vulnerability types across functions
         issues.sort_by(|a, b| {
-            a.location.module_name.cmp(&b.location.module_name)
-                .then(a.location.function_name.cmp(&b.location.function_name))
-                .then(a.location.instruction_index.cmp(&b.location.instruction_index))
+            a.id.cmp(&b.id)
+                .then(a.location.module_name.cmp(&b.location.module_name))
+                .then(a.title.cmp(&b.title))
         });
         
-        // Dedup
+        // Enhanced deduplication: remove issues with same ID and similar characteristics
         issues.dedup_by(|a, b| {
-            a.id == b.id &&
-            a.location.module_name == b.location.module_name &&
-            a.location.function_name == b.location.function_name &&
-            a.location.instruction_index == b.location.instruction_index
+            // Same issue ID and same title means likely duplicate
+            a.id == b.id && a.title == b.title
         });
         
         issues

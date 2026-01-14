@@ -1,7 +1,7 @@
 [package]
 name = "suizero"
 version = "1.0.1"
-edition = "2026"
+edition = "2021"
 author = ["kaveyjoe <web3.kaveyjoe@gmail.com>"]
 description = "SUIZERO: The Advanced SUI Move Security Analyzer"
 license = "Apache-2.0"
@@ -31,7 +31,7 @@ toml = "0.7"
 clap = { version = "4.0", features = ["derive", "env"] }
 clap_complete = "4.0"
 colored = "2.0"
-comfy-table = "7.0"
+comfy-table = "6.1.4"
 indicatif = { version = "0.17", optional = true }
 tokio = { version = "1.0", features = ["full", "rt-multi-thread"] }
 rayon = { version = "1.7", optional = true }
