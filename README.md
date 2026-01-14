@@ -8,7 +8,7 @@
 
 [![Version](https://img.shields.io/badge/version-1.0.1-blue.svg?style=for-the-badge)](https://github.com/suizero/suizero)
 [![Security Rating](https://img.shields.io/badge/security-A%2B-success.svg?style=for-the-badge)](https://sui.io)
-[![Accuracy](https://img.shields.io/badge/accuracy-95%25-success.svg?style=for-the-badge)](docs/VALIDATION_REPORT.md)
+[![Accuracy](https://img.shields.io/badge/accuracy-85%25-success.svg?style=for-the-badge)](docs/VALIDATION_REPORT.md)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-green?style=for-the-badge)](LICENSE)
 [![Build Status](https://img.shields.io/badge/build-passing-success.svg?style=for-the-badge)](https://github.com/suizero/suizero/actions)
 
