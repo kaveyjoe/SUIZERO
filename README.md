@@ -270,13 +270,7 @@ SUIZERO has been rigorously tested against known vulnerability benchmarks:
 
 Our validation suite includes intentionally vulnerable "Capture the Flag" style contracts to ensure real-world effectiveness.
 
----
 
-## 🤝 Acknowledgements
-
-Special thanks to the **Sui Foundation** and **Mysten Labs** for creating Move, a language that makes formal verification possible.
-
----
 
 
 
