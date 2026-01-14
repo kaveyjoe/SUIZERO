@@ -105,6 +105,140 @@ fn is_financial_type(token: &SignatureToken, ctx: &DetectionContext) -> bool {
     }
 }
 
+// Helper function to detect flash loan patterns
+fn detect_flash_loan_patterns(ctx: &DetectionContext, func_def: &move_binary_format::file_format::FunctionDefinition) -> Option<String> {
+    if let Some(code) = &func_def.code {
+        // Look for functions that allow borrowing without collateral
+        let mut has_subtraction_from_reserves = false;
+        let mut has_transfer_out = false;
+        let mut has_return_verification = false;
+        
+        for instr in &code.code {
+            match instr {
+                Bytecode::Sub => {
+                    // Subtraction from reserves indicates potential lending
+                    has_subtraction_from_reserves = true;
+                }
+                Bytecode::MoveTo(_) | Bytecode::MoveToGeneric(_) => {
+                    // Transfer of assets out
+                    has_transfer_out = true;
+                }
+                Bytecode::Lt | Bytecode::Le | Bytecode::Gt | Bytecode::Ge | Bytecode::Call(_) | Bytecode::CallGeneric(_) => {
+                    // Any comparison or call could be return verification
+                    has_return_verification = true;
+                }
+                _ => {}
+            }
+        }
+        
+        // Pattern: subtraction from reserves + transfer out + no return verification
+        if has_subtraction_from_reserves && has_transfer_out && !has_return_verification {
+            return Some("Function allows borrowing without return verification".to_string());
+        }
+    }
+    
+    None
+}
+
+// Helper function to detect oracle manipulation patterns
+fn detect_oracle_manipulation_patterns(ctx: &DetectionContext, func_def: &move_binary_format::file_format::FunctionDefinition) -> Option<String> {
+    if let Some(code) = &func_def.code {
+        // Look for operations that use oracle data without validation
+        let mut has_price_access = false;
+        let mut has_multiplication = false;
+        let mut has_validation = false;
+        
+        for instr in &code.code {
+            match instr {
+                Bytecode::Call(_) | Bytecode::CallGeneric(_) => {
+                    // This could be an oracle call
+                    has_price_access = true;
+                }
+                Bytecode::Mul => {
+                    // Multiplication often happens with oracle prices
+                    has_multiplication = true;
+                }
+                Bytecode::Lt | Bytecode::Le | Bytecode::Gt | Bytecode::Ge => {
+                    // Comparison operations serve as validation
+                    has_validation = true;
+                }
+                _ => {}
+            }
+        }
+        
+        // Pattern: price access + multiplication without validation
+        if has_price_access && has_multiplication && !has_validation {
+            return Some("Function uses oracle price without sufficient validation/bounds checking".to_string());
+        }
+    }
+    
+    None
+}
+
+// Helper function to detect reentrancy patterns
+fn detect_reentrancy_patterns(ctx: &DetectionContext, func_def: &move_binary_format::file_format::FunctionDefinition) -> Option<String> {
+    if let Some(code) = &func_def.code {
+        let mut state_changes_after_calls = 0;
+        let mut found_external_call = false;
+        
+        for instr in &code.code {
+            match instr {
+                Bytecode::Call(_) | Bytecode::CallGeneric(_) => {
+                    // Potential external call
+                    found_external_call = true;
+                }
+                Bytecode::StLoc(_) | Bytecode::WriteRef => {
+                    // Potential state change
+                    if found_external_call {
+                        state_changes_after_calls += 1;
+                    }
+                }
+                _ => {
+                    // Reset flag if we encounter non-call, non-state-change instruction
+                    if matches!(instr, Bytecode::BrTrue(_) | Bytecode::BrFalse(_) | Bytecode::Branch(_)) {
+                        // Don't reset for branch instructions
+                    } else {
+                        found_external_call = false;
+                    }
+                }
+            }
+        }
+        
+        if state_changes_after_calls > 0 {
+            return Some("Function has state changes after external calls, enabling reentrancy".to_string());
+        }
+    }
+    
+    None
+}
+
+// Helper function to detect slippage protection
+fn detect_slippage_protection(ctx: &DetectionContext, func_def: &move_binary_format::file_format::FunctionDefinition) -> Option<String> {
+    if let Some(code) = &func_def.code {
+        // Look for minimum output validation in swap functions
+        let swap_related = ctx.module.identifier_at(
+            ctx.module.function_handles[func_def.function.0 as usize].name
+        ).as_str().to_lowercase().contains("swap");
+        
+        if swap_related {
+            // Check for slippage protection by looking for minimum output checks
+            let has_comparison = code.code.iter().any(|instr| {
+                matches!(instr, Bytecode::Gt | Bytecode::Ge | Bytecode::Lt | Bytecode::Le)
+            });
+            
+            let has_validation_call = code.code.iter().any(|instr| {
+                matches!(instr, Bytecode::Call(_) | Bytecode::CallGeneric(_))
+            });
+            
+            if !has_comparison && !has_validation_call {
+                return Some("Swap function lacks slippage protection/minimal output validation".to_string());
+            }
+        }
+    }
+    
+    None
+}
+
 // Helper: count nested loops
 fn count_nested_loops(code: &[Bytecode]) -> u32 {
     let mut max_nesting = 0;
@@ -136,32 +270,47 @@ impl SecurityDetector for GasDOSDetector {
         let mut issues = vec![];
         for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
             if let Some(code) = &func_def.code {
-                // Only check financial functions
-                if !is_financial_function(ctx, func_def) {
-                    continue;
-                }
-                
                 let mut unbounded_loops = 0;
+                
+                // Analyze branches to identify actual loops (backward jumps)
                 for (i, instr) in code.code.iter().enumerate() {
-                    if matches!(instr, Bytecode::BrTrue(_) | Bytecode::BrFalse(_) | Bytecode::Branch(_)) {
-                        let has_counter_check = code.code.iter().skip(i.saturating_sub(5)).take(10).any(|b| {
-                            matches!(b, Bytecode::Lt | Bytecode::Le | Bytecode::Gt | Bytecode::Ge)
-                        });
-                        if !has_counter_check {
-                            unbounded_loops += 1;
-                        }
+                    match instr {
+                        Bytecode::Branch(target_pc) => {
+                            // Check if this is a backward branch (loop)
+                            if *target_pc < i as u16 {
+                                let has_counter_check = code.code.iter().skip(i.saturating_sub(5)).take(10).any(|b| {
+                                    matches!(b, Bytecode::Lt | Bytecode::Le | Bytecode::Gt | Bytecode::Ge)
+                                });
+                                if !has_counter_check {
+                                    unbounded_loops += 1;
+                                }
+                            }
+                        },
+                        Bytecode::BrTrue(target_pc) | Bytecode::BrFalse(target_pc) => {
+                            // Check if this is a backward branch (loop)
+                            if *target_pc < i as u16 {
+                                let has_counter_check = code.code.iter().skip(i.saturating_sub(5)).take(10).any(|b| {
+                                    matches!(b, Bytecode::Lt | Bytecode::Le | Bytecode::Gt | Bytecode::Ge)
+                                });
+                                if !has_counter_check {
+                                    unbounded_loops += 1;
+                                }
+                            }
+                        },
+                        _ => {}
                     }
                 }
+                
                 if unbounded_loops > 0 {
                     issues.push(SecurityIssue {
                         id: self.id().to_string(),
                         severity: self.default_severity(),
                         confidence: Confidence::High,
-                        title: "Unbounded loop enables gas DOS in financial function".to_string(),
-                        description: format!("Financial function has {} unbounded loops that can cause gas exhaustion", unbounded_loops),
+                        title: "Unbounded loop enables gas DOS".to_string(),
+                        description: format!("Function has {} unbounded loops that can cause gas exhaustion", unbounded_loops),
                         location: create_loc(ctx, idx, 0),
                         source_code: None,
-                        recommendation: "Add iteration limits in financial functions. Implement pagination. Use gas metering.".to_string(),
+                        recommendation: "Add iteration limits. Implement pagination. Use gas metering.".to_string(),
                         references: vec!["https://consensys.github.io/smart-contract-best-practices/attacks/denial-of-service/".to_string()],
                         metadata: HashMap::new(),
                     });
@@ -896,6 +1045,273 @@ impl SecurityDetector for SortingDOSDetector {
                         location: create_loc(ctx, idx, 0),
                         source_code: None,
                         recommendation: "Optimize sorting algorithms. Use efficient data structures in financial functions.".to_string(),
+                        references: vec![],
+                        metadata: HashMap::new(),
+                    });
+                }
+            }
+        }
+        issues
+    }
+}
+
+// ========================================
+// 21. FLASH LOAN ATTACK
+// ========================================
+pub struct FlashLoanAttackDetector;
+#[async_trait::async_trait]
+impl SecurityDetector for FlashLoanAttackDetector {
+    fn id(&self) -> &'static str { "FIN-003" }
+    fn name(&self) -> &'static str { "Flash Loan Attack" }
+    fn description(&self) -> &'static str { "Detects flash loan attack patterns in financial functions" }
+    fn default_severity(&self) -> Severity { Severity::Critical }
+
+    async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
+        let mut issues = vec![];
+        for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
+            if let Some(code) = &func_def.code {
+                // Only check financial functions
+                if !is_financial_function(ctx, func_def) {
+                    continue;
+                }
+                
+                if let Some(description) = detect_flash_loan_patterns(ctx, func_def) {
+                    issues.push(SecurityIssue {
+                        id: self.id().to_string(),
+                        severity: self.default_severity(),
+                        confidence: Confidence::High,
+                        title: "Potential flash loan attack vulnerability".to_string(),
+                        description,
+                        location: create_loc(ctx, idx, 0),
+                        source_code: None,
+                        recommendation: "Implement proper collateral checks. Verify asset returns before releasing funds.".to_string(),
+                        references: vec![],
+                        metadata: HashMap::new(),
+                    });
+                }
+            }
+        }
+        issues
+    }
+}
+
+// ========================================
+// 22. ORACLE MANIPULATION
+// ========================================
+pub struct OracleManipulationDetector;
+#[async_trait::async_trait]
+impl SecurityDetector for OracleManipulationDetector {
+    fn id(&self) -> &'static str { "FIN-004" }
+    fn name(&self) -> &'static str { "Oracle Manipulation" }
+    fn description(&self) -> &'static str { "Detects oracle manipulation vulnerabilities in financial functions" }
+    fn default_severity(&self) -> Severity { Severity::Critical }
+
+    async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
+        let mut issues = vec![];
+        for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
+            if let Some(_code) = &func_def.code {
+                // Only check financial functions
+                if !is_financial_function(ctx, func_def) {
+                    continue;
+                }
+                
+                if let Some(description) = detect_oracle_manipulation_patterns(ctx, func_def) {
+                    issues.push(SecurityIssue {
+                        id: self.id().to_string(),
+                        severity: self.default_severity(),
+                        confidence: Confidence::High,
+                        title: "Potential oracle manipulation vulnerability".to_string(),
+                        description,
+                        location: create_loc(ctx, idx, 0),
+                        source_code: None,
+                        recommendation: "Implement multi-oracle systems. Add bounds checking. Use TWAP oracles.".to_string(),
+                        references: vec![],
+                        metadata: HashMap::new(),
+                    });
+                }
+            }
+        }
+        issues
+    }
+}
+
+// ========================================
+// 23. REENTRANCY ATTACK
+// ========================================
+pub struct ReentrancyAttackDetector;
+#[async_trait::async_trait]
+impl SecurityDetector for ReentrancyAttackDetector {
+    fn id(&self) -> &'static str { "FIN-005" }
+    fn name(&self) -> &'static str { "Reentrancy Attack" }
+    fn description(&self) -> &'static str { "Detects reentrancy attack patterns in financial functions" }
+    fn default_severity(&self) -> Severity { Severity::Critical }
+
+    async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
+        let mut issues = vec![];
+        for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
+            if let Some(code) = &func_def.code {
+                // Only check financial functions
+                if !is_financial_function(ctx, func_def) {
+                    continue;
+                }
+                
+                if let Some(description) = detect_reentrancy_patterns(ctx, func_def) {
+                    issues.push(SecurityIssue {
+                        id: self.id().to_string(),
+                        severity: self.default_severity(),
+                        confidence: Confidence::High,
+                        title: "Potential reentrancy vulnerability".to_string(),
+                        description,
+                        location: create_loc(ctx, idx, 0),
+                        source_code: None,
+                        recommendation: "Apply checks-effects-interactions pattern. Use reentrancy guards.".to_string(),
+                        references: vec![],
+                        metadata: HashMap::new(),
+                    });
+                }
+            }
+        }
+        issues
+    }
+}
+
+// ========================================
+// 24. SLIPPAGE PROTECTION
+// ========================================
+pub struct SlippageProtectionDetector;
+#[async_trait::async_trait]
+impl SecurityDetector for SlippageProtectionDetector {
+    fn id(&self) -> &'static str { "FIN-006" }
+    fn name(&self) -> &'static str { "Slippage Protection" }
+    fn description(&self) -> &'static str { "Detects missing slippage protection in swap functions" }
+    fn default_severity(&self) -> Severity { Severity::High }
+
+    async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
+        let mut issues = vec![];
+        for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
+            if let Some(_code) = &func_def.code {
+                // Only check financial functions
+                if !is_financial_function(ctx, func_def) {
+                    continue;
+                }
+                
+                if let Some(description) = detect_slippage_protection(ctx, func_def) {
+                    issues.push(SecurityIssue {
+                        id: self.id().to_string(),
+                        severity: self.default_severity(),
+                        confidence: Confidence::High,
+                        title: "Missing slippage protection".to_string(),
+                        description,
+                        location: create_loc(ctx, idx, 0),
+                        source_code: None,
+                        recommendation: "Add minimum output validation. Implement slippage tolerance checks.".to_string(),
+                        references: vec![],
+                        metadata: HashMap::new(),
+                    });
+                }
+            }
+        }
+        issues
+    }
+}
+
+// ========================================
+// 25. GOVERNANCE ATTACK
+// ========================================
+pub struct GovernanceAttackDetector;
+#[async_trait::async_trait]
+impl SecurityDetector for GovernanceAttackDetector {
+    fn id(&self) -> &'static str { "GOV-001" }
+    fn name(&self) -> &'static str { "Governance Attack" }
+    fn description(&self) -> &'static str { "Detects governance attack patterns in functions" }
+    fn default_severity(&self) -> Severity { Severity::High }
+
+    async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
+        let mut issues = vec![];
+        for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
+            if let Some(_code) = &func_def.code {
+                let func_name = ctx.module.identifier_at(
+                    ctx.module.function_handles[func_def.function.0 as usize].name
+                ).as_str().to_lowercase();
+                
+                // Look for functions with governance-related names
+                if func_name.contains("governance") || func_name.contains("vote") || 
+                   func_name.contains("proposal") || func_name.contains("admin") || 
+                   func_name.contains("upgrade") || func_name.contains("policy") {
+                    
+                    // Check for improper access controls
+                    let mut has_sender_check = false;
+                    let mut has_role_check = false;
+                    
+                    if let Some(code) = &func_def.code {
+                        for instr in &code.code {
+                            match instr {
+                                Bytecode::Call(_) | Bytecode::CallGeneric(_) => {
+                                    // Check if there's a sender or role validation call
+                                    has_sender_check = true;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    
+                    // If governance-related function but lacks proper checks
+                    if !has_sender_check && !has_role_check {
+                        issues.push(SecurityIssue {
+                            id: self.id().to_string(),
+                            severity: self.default_severity(),
+                            confidence: Confidence::High,
+                            title: "Missing governance access controls".to_string(),
+                            description: "Governance function lacks proper access controls".to_string(),
+                            location: create_loc(ctx, idx, 0),
+                            source_code: None,
+                            recommendation: "Implement proper governance access controls and role validation.".to_string(),
+                            references: vec![],
+                            metadata: HashMap::new(),
+                        });
+                    }
+                }
+            }
+        }
+        issues
+    }
+}
+
+// ========================================
+// 26. STORAGE BLOAT
+// ========================================
+pub struct StorageBloatDetector;
+#[async_trait::async_trait]
+impl SecurityDetector for StorageBloatDetector {
+    fn id(&self) -> &'static str { "STO-001" }
+    fn name(&self) -> &'static str { "Storage Bloat" }
+    fn description(&self) -> &'static str { "Detects unbounded storage growth vulnerabilities" }
+    fn default_severity(&self) -> Severity { Severity::High }
+
+    async fn detect(&self, ctx: &DetectionContext) -> Vec<SecurityIssue> {
+        let mut issues = vec![];
+        for (idx, func_def) in ctx.module.function_defs.iter().enumerate() {
+            if let Some(code) = &func_def.code {
+                // Look for vector operations without bounds checks
+                let push_operations = code.code.iter().filter(|instr| {
+                    matches!(instr, Bytecode::VecPushBack(_))
+                }).count();
+                
+                let size_checks = code.code.iter().filter(|instr| {
+                    matches!(instr, Bytecode::VecLen(_) | Bytecode::Lt | Bytecode::Le | Bytecode::Gt | Bytecode::Ge)
+                }).count();
+                
+                // If there are push operations but no size checks
+                if push_operations > 0 && size_checks == 0 {
+                    issues.push(SecurityIssue {
+                        id: self.id().to_string(),
+                        severity: self.default_severity(),
+                        confidence: Confidence::High,
+                        title: "Potential storage bloat vulnerability".to_string(),
+                        description: "Function performs vector push operations without size bounds checking".to_string(),
+                        location: create_loc(ctx, idx, 0),
+                        source_code: None,
+                        recommendation: "Implement size limits for vector operations to prevent storage bloat.".to_string(),
                         references: vec![],
                         metadata: HashMap::new(),
                     });

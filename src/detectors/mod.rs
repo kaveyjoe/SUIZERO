@@ -207,6 +207,12 @@ impl DetectorRegistry {
         registry.add(Box::new(extended::dos::SortingDOSDetector));
         registry.add(Box::new(extended::dos::HashingDOSDetector));
         
+        // Extended Detectors - New Financial Detectors
+        registry.add(Box::new(extended::dos::FlashLoanAttackDetector));
+        registry.add(Box::new(extended::dos::OracleManipulationDetector));
+        registry.add(Box::new(extended::dos::ReentrancyAttackDetector));
+        registry.add(Box::new(extended::dos::SlippageProtectionDetector));
+        
         // Extended Detectors - Arithmetic (20 detectors)
         registry.add(Box::new(extended::arithmetic::IntegerOverflowAddDetector));
         registry.add(Box::new(extended::arithmetic::IntegerOverflowMulDetector));
@@ -387,6 +393,36 @@ impl DetectorRegistry {
 
         // Extended Detectors - Race Conditions (SUI-038)
         registry.add(Box::new(extended::temporal::SharedObjectRaceDetector));
+
+        // Extended Detectors - Receipt Forgery (SUI-032)
+        registry.add(Box::new(extended::receipt_forgery::ReceiptForgeryDetector));
+
+        // Extended Detectors - Vault-Potato Binding (SUI-033)
+        registry.add(Box::new(extended::vault_binding::VaultPotatoBindingDetector));
+
+        // Extended Detectors - Hot Potato Lifecycle (SEM-001)
+        registry.add(Box::new(extended::hot_potato::HotPotatoLifecycleEscapeDetector));
+
+        // Extended Detectors - Phantom Authorization (SEM-002)
+        registry.add(Box::new(extended::phantom_auth::PhantomAuthorizationDetector));
+
+        // Extended Detectors - Capability Theater (SEM-003)
+        registry.add(Box::new(extended::capability_theater::CapabilityTheaterDetector));
+
+        // Extended Detectors - Value Conservation (SEM-004)
+        registry.add(Box::new(extended::value_conservation::ValueConservationViolationDetector));
+
+        // Extended Detectors - Emergency Auth (SEM-005)
+        registry.add(Box::new(extended::emergency_auth::UnauthenticatedEmergencyFunctionDetector));
+
+        // Extended Detectors - Event-State Sync (SEM-007)
+        registry.add(Box::new(extended::event_state_sync::EventStateSyncDetector));
+
+        // Extended Detectors - Nonce Enforcement (SEM-006)
+        registry.add(Box::new(extended::nonce_enforcement::NonceEnforcementDetector));
+
+        // Extended Detectors - Value Duplication (SEM-008)
+        registry.add(Box::new(extended::value_duplication::ValueDuplicationDetector));
 
         registry
     }

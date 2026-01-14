@@ -1,0 +1,4 @@
+target/
+temp_clean/
+**/*.DS_Store
+*.log

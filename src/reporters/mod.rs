@@ -33,7 +33,7 @@ impl ReportGenerator for ConsoleReporter {
                     }),
                 Cell::new(&issue.title),
                 Cell::new(format!("{}::{}", issue.location.module_name, issue.location.function_name)),
-                Cell::new(issue.description.chars().take(100).collect::<String>()),
+                Cell::new(&issue.description),
             ]);
         }
         

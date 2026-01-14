@@ -422,7 +422,7 @@ async fn analyze_command(args: AnalyzeArgs) -> Result<(), Box<dyn std::error::Er
     // Display results
     display_results(&result, &args.format, args.output.as_ref()).await?;
     
-    // Check for critical/high issues
+    // Count all severity levels
     let critical_count = result.issues.iter()
         .filter(|i| i.severity == Severity::Critical)
         .count();
@@ -431,9 +431,25 @@ async fn analyze_command(args: AnalyzeArgs) -> Result<(), Box<dyn std::error::Er
         .filter(|i| i.severity == Severity::High)
         .count();
     
-    if critical_count > 0 || high_count > 0 {
-        println!("\n{} {} critical and {} high severity issues found!", 
-            "⚠️".yellow(), critical_count, high_count);
+    let medium_count = result.issues.iter()
+        .filter(|i| i.severity == Severity::Medium)
+        .count();
+    
+    if critical_count > 0 || high_count > 0 || medium_count > 0 {
+        let mut summary_parts = Vec::new();
+        if critical_count > 0 {
+            summary_parts.push(format!("{} critical", critical_count));
+        }
+        if high_count > 0 {
+            summary_parts.push(format!("{} high", high_count));
+        }
+        if medium_count > 0 {
+            summary_parts.push(format!("{} medium", medium_count));
+        }
+        
+        let summary = summary_parts.join(" and ");
+        println!("\n{} {} severity issues found!", 
+            "⚠️".yellow(), summary);
     }
     
     Ok(())
